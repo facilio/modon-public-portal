@@ -1,0 +1,320 @@
+import { useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  XCircle,
+  FileText,
+  Loader2,
+  Mail,
+} from "lucide-react";
+import { useLang } from "../../i18n/LanguageContext";
+import { Card } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
+import { StatusBadge } from "../../components/ui/StatusBadge";
+import { ProgressStepper } from "../../components/ui/ProgressStepper";
+import { siteById, roomTypeLabel } from "../../lib/mockData";
+import { formatDate, formatNumber } from "../../lib/format";
+import {
+  api,
+  type InquiryDetail as Detail,
+  type Persona,
+  type PublicStatus,
+} from "../../lib/api";
+
+const personaKey: Record<Persona, "f.persona.company" | "f.persona.agency" | "f.persona.individual"> = {
+  Corporate: "f.persona.company",
+  Sponsor: "f.persona.agency",
+  Individual: "f.persona.individual",
+};
+
+export function InquiryDetailView({
+  code,
+  onBack,
+  onStatusChange,
+}: {
+  code: string;
+  onBack: () => void;
+  onStatusChange: (code: string, status: PublicStatus) => void;
+}) {
+  const { t, lang } = useLang();
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [decided, setDecided] = useState<"approve" | "reject" | null>(null);
+
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    api
+      .getInquiryDetail(code)
+      .then((d) => {
+        if(!cancelled){
+          console.log(d);
+          setDetail(d);
+        }
+      })
+      .catch(() => !cancelled && setError(true))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  function handleDecision(decision: "approve" | "reject", status: PublicStatus) {
+    setDetail((d) => (d ? { ...d, status } : d));
+    setDecided(decision);
+    onStatusChange(code, status);
+  }
+
+  return (
+    <div>
+      <button
+        onClick={onBack}
+        className="mb-6 inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
+        {t("st.detail.back")}
+      </button>
+
+      {loading && (
+        <Card className="flex items-center justify-center gap-2 p-12 text-muted">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </Card>
+      )}
+
+      {error && !loading && (
+        <Card className="p-10 text-center text-muted">{t("st.lookup.error")}</Card>
+      )}
+
+      {detail && !loading && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-2xl font-bold tracking-wide text-ink">
+                  {detail.code}
+                </span>
+                <StatusBadge status={detail.status} />
+              </div>
+              <p className="mt-1.5 text-sm text-muted">
+                {t("st.card.submitted")}: {formatDate(detail.submittedAt, lang)} ·{" "}
+                {t("st.card.updated")}: {formatDate(detail.updatedAt, lang)}
+              </p>
+            </div>
+          </div>
+
+          {/* Progress */}
+          <Card className="p-6">
+            <ProgressStepper status={detail.status} />
+          </Card>
+
+          {/* Offer band while the offer is out; confirmation once a decision is made */}
+          {decided ? (
+            <DecisionBanner decision={decided} />
+          ) : detail.status === "offer" ? (
+            <OfferBand code={detail.code} offer={detail.offer} onDecision={handleDecision} />
+          ) : null}
+
+          {/* Read-only inquiry summary */}
+          <ReadonlySection title={t("rev.section.contact")}>
+            <Row label={t("f.persona")} value={t(personaKey[detail.persona])} />
+            <Row label={t("f.fullName")} value={detail.contact.name} />
+            <Row label={t("f.mobile")} value={detail.contact.mobile} />
+            <Row label={t("f.email")} value={detail.contact.email} />
+            <Row
+              label={t("f.lang")}
+              value={detail.contact.preferred_language === "ar" ? t("f.lang.ar") : t("f.lang.en")}
+            />
+          </ReadonlySection>
+
+          <ReadonlySection title={t("rev.section.requirement")}>
+            <Row label={t("f.beds")} value={formatNumber(detail.requirement.requested_beds, lang)} />
+            <Row
+              label={t("f.genderMix")}
+              value={`${t("f.male")}: ${detail.requirement.gender_mix.male} · ${t("f.female")}: ${detail.requirement.gender_mix.female}`}
+            />
+            <Row label={t("f.moveIn")} value={formatDate(detail.requirement.move_in_date, lang)} />
+            <Row
+              label={t("f.duration")}
+              value={`${detail.requirement.duration_months} ${t("f.months")}`}
+            />
+          </ReadonlySection>
+
+          <ReadonlySection title={t("rev.section.preferences")}>
+            <Row
+              label={t("f.sites")}
+              value={rankedLabels(detail.preferences.sites, (id) => siteById(id)?.name[lang]) || t("rev.notProvided")}
+            />
+            <Row
+              label={t("f.roomType")}
+              value={rankedLabels(detail.preferences.room_types, (v) => roomTypeLabel(v)?.label[lang]) || t("rev.notProvided")}
+            />
+          </ReadonlySection>
+
+          {detail.answers.length > 0 && (
+            <ReadonlySection title={t("st.detail.additional")}>
+              {detail.answers.map((a, i) => (
+                <Row key={i} label={a.label} value={a.value || t("rev.notProvided")} />
+              ))}
+            </ReadonlySection>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Confirmation banner after a decision ────────────────────────────────────────
+function DecisionBanner({ decision }: { decision: "approve" | "reject" }) {
+  const { t } = useLang();
+  const approved = decision === "approve";
+  return (
+    <Card
+      className={
+        approved
+          ? "border-emerald-200 bg-tint-green p-6"
+          : "border-slate-200 bg-canvas p-6"
+      }
+    >
+      <div className="flex items-center gap-2">
+        {approved ? (
+          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+        ) : (
+          <XCircle className="h-5 w-5 text-slate-500" />
+        )}
+        <p className="text-sm font-medium text-ink">
+          {approved ? t("st.offer.approved") : t("st.offer.rejected")}
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+// ── Offer band: Approve / Reject ────────────────────────────────────────────────
+function OfferBand({
+  code,
+  offer,
+  onDecision,
+}: {
+  code: string;
+  offer?: Detail["offer"];
+  onDecision: (decision: "approve" | "reject", status: PublicStatus) => void;
+}) {
+  const { t, lang } = useLang();
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+
+  async function respond(decision: "approve" | "reject") {
+    setBusy(decision);
+    try {
+      const res = await api.respondOffer(code, decision);
+      onDecision(decision, res.status);
+    } catch {
+      setBusy(null); // keep buttons enabled on failure
+    }
+  }
+
+  return (
+    <Card className="border-primary/20 bg-primary-soft/60 p-6">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-primary">
+          <FileText className="h-5 w-5" />
+        </span>
+        <div className="flex-1">
+          <h3 className="text-base font-bold text-ink">{t("st.offer.title")}</h3>
+          <p className="mt-1 text-sm text-muted">{t("st.offer.sub")}</p>
+
+          <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-sm font-medium text-primary">
+            <Mail className="h-4 w-4" />
+            {t("st.offer.checkEmail")}
+          </p>
+
+          {offer && (
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ink-soft">
+              {offer.proposal_no && (
+                <span>
+                  <span className="text-muted">{t("st.offer.proposalNo")}: </span>
+                  <span className="font-medium">{offer.proposal_no}</span>
+                </span>
+              )}
+              {offer.valid_until && (
+                <span>
+                  <span className="text-muted">{t("st.offer.validUntil")}: </span>
+                  <span className="font-medium">{formatDate(offer.valid_until, lang)}</span>
+                </span>
+              )}
+              {offer.total != null && (
+                <span>
+                  <span className="text-muted">{t("st.offer.total")}: </span>
+                  <span className="font-medium">
+                    {offer.currency ?? "AED"} {formatNumber(offer.total, lang)}
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Button onClick={() => respond("approve")} disabled={busy !== null}>
+              {busy === "approve" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              {t("st.offer.approve")}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => respond("reject")}
+              disabled={busy !== null}
+              className="hover:border-red-300 hover:text-red-600"
+            >
+              {busy === "reject" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="h-4 w-4" />
+              )}
+              {t("st.offer.reject")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ── Read-only helpers ────────────────────────────────────────────────────────
+function ReadonlySection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-white">
+      <div className="border-b border-line px-5 py-3">
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      </div>
+      <dl className="divide-y divide-line">{children}</dl>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-4 px-5 py-3 text-sm">
+      <dt className="w-44 shrink-0 text-muted">{label}</dt>
+      <dd className="font-medium text-ink-soft">{value}</dd>
+    </div>
+  );
+}
+
+/** "1. ICAD, 2. KEZAD" from ranked ids + a label resolver. */
+function rankedLabels(ids: string[], resolve: (id: string) => string | undefined): string {
+  return ids
+    .map((id, i) => `${i + 1}. ${resolve(id) ?? id}`)
+    .join("  ");
+}

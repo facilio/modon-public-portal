@@ -37,7 +37,6 @@ export interface CreateInquiryInput {
   name: string;
   mobile: string;
   email: string;
-  preferred_language: "en" | "ar";
 }
 
 export interface CreateInquiryResult {
@@ -49,7 +48,6 @@ export interface CreateInquiryResult {
 export interface GenderMix {
   male: number;
   female: number;
-  family_units: number;
 }
 
 export interface FixedRequirement {
@@ -90,6 +88,7 @@ export type PublicStatus =
   | "review"
   | "offer"
   | "accepted"
+  | "declined"
   | "closed";
 
 export interface StatusInquiry {
@@ -99,6 +98,62 @@ export interface StatusInquiry {
   roomType: string;
   submittedAt: string;
   updatedAt: string;
+  status: PublicStatus;
+}
+
+// ── Inquiry detail (read-only view on the status page) ───────────────────────
+/** A label/value pair already resolved for display (persona/site/room labels). */
+export interface LabeledValue {
+  label: string;
+  value: string;
+}
+
+/** One resolved dynamic answer (question label + display value). */
+export interface AnswerRow {
+  label: string;
+  value: string;
+}
+
+/** Optional offer summary shown when status = Offer Sent (Phase-2 proposal doc is separate). */
+export interface OfferSummary {
+  proposal_no?: string;
+  valid_until?: string; // ISO
+  currency?: string;
+  total?: number;
+}
+
+export interface InquiryDetail {
+  code: string;
+  status: PublicStatus;
+  submittedAt: string;
+  updatedAt: string;
+  persona: Persona;
+  contact: {
+    name: string;
+    mobile: string;
+    email: string;
+    preferred_language: "en" | "ar";
+  };
+  requirement: {
+    requested_beds: number;
+    gender_mix: GenderMix;
+    move_in_date: string;
+    duration_months: number;
+  };
+  /** Ranked preferences as ids/values (index order = rank); UI resolves labels. */
+  preferences: {
+    sites: string[]; // site ids
+    room_types: string[]; // room type values
+  };
+  /** Resolved dynamic questionnaire answers. */
+  answers: AnswerRow[];
+  offer?: OfferSummary;
+}
+
+export type OfferDecision = "approve" | "reject";
+
+export interface OfferDecisionResult {
+  ok: boolean;
   status: PublicStatus;
 }
 

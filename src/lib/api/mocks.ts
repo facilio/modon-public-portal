@@ -12,8 +12,12 @@ import {
 } from "../mockData";
 import {
   ApiError,
+  type AnswerRow,
   type CreateInquiryInput,
   type CreateInquiryResult,
+  type InquiryDetail,
+  type OfferDecision,
+  type OfferDecisionResult,
   type Persona,
   type StatusInquiry,
   type SubmitInquiryResult,
@@ -268,7 +272,121 @@ export const mockApi = {
     if (otp.trim() !== DEMO_OTP) throw new ApiError("generic");
     return inquiriesForEmail(email).map(stripEmail);
   },
+
+  // ── Inquiry detail (read-only status view) ─────────────────────────────────
+  async getInquiryDetail(code: string): Promise<InquiryDetail> {
+    await wait(null);
+    const inq = MOCK_INQUIRIES.find(
+      (i) => i.code.toUpperCase() === code.trim().toUpperCase()
+    );
+    if (!inq) throw new ApiError("generic");
+    return buildDetail(inq);
+  },
+
+  // ── Approve / reject the offer (Offer Sent) ────────────────────────────────
+  async respondOffer(
+    _code: string,
+    decision: OfferDecision
+  ): Promise<OfferDecisionResult> {
+    await wait(null);
+    return { ok: true, status: decision === "approve" ? "accepted" : "declined" };
+  },
 };
+
+// Static per-code extras that aren't on the lightweight list record.
+const DETAIL_EXTRA: Record<
+  string,
+  { persona: Persona; name: string; mobile: string; gender: [number, number, number]; moveIn: string; duration: number; answers: AnswerRow[] }
+> = {
+  "INQ-2026-A7K3M9": {
+    persona: "Corporate",
+    name: "Apex Facilities LLC",
+    mobile: "+971 50 123 4567",
+    gender: [80, 40, 0],
+    moveIn: "2026-09-01",
+    duration: 12,
+    answers: [
+      { label: "Trade license number", value: "TL-88421" },
+      { label: "Budget band (per bed / month)", value: "AED 800–1,200" },
+      { label: "Services you’re interested in", value: "Catering, Cleaning" },
+      { label: "How soon do you need this?", value: "Within 30 days" },
+    ],
+  },
+  "INQ-2026-B4X8T2": {
+    persona: "Corporate",
+    name: "Nexus Contracting",
+    mobile: "+971 55 987 6543",
+    gender: [40, 0, 0],
+    moveIn: "2026-07-15",
+    duration: 6,
+    answers: [
+      { label: "Trade license number", value: "TL-20031" },
+      { label: "Budget band (per bed / month)", value: "AED 1,200–1,800" },
+    ],
+  },
+  "INQ-2026-C9R5N6": {
+    persona: "Sponsor",
+    name: "Hope Welfare Program",
+    mobile: "+971 52 444 1122",
+    gender: [150, 50, 5],
+    moveIn: "2026-10-15",
+    duration: 24,
+    answers: [
+      { label: "Program name", value: "Seasonal Workforce 2026" },
+      { label: "Number of beneficiaries", value: "205" },
+      { label: "How soon do you need this?", value: "Immediately" },
+    ],
+  },
+  "INQ-2026-D2H7P4": {
+    persona: "Individual",
+    name: "Rahul Sharma",
+    mobile: "+971 56 200 3040",
+    gender: [1, 0, 0],
+    moveIn: "2026-04-01",
+    duration: 3,
+    answers: [
+      { label: "Nationality", value: "Indian" },
+      { label: "Gender", value: "Male" },
+    ],
+  },
+};
+
+function buildDetail(inq: (typeof MOCK_INQUIRIES)[number]): InquiryDetail {
+  const x = DETAIL_EXTRA[inq.code] ?? {
+    persona: "Corporate" as Persona,
+    name: "Applicant",
+    mobile: "+971 50 000 0000",
+    gender: [inq.beds, 0, 0] as [number, number, number],
+    moveIn: "2026-09-01",
+    duration: 12,
+    answers: [] as AnswerRow[],
+  };
+  return {
+    code: inq.code,
+    status: inq.status,
+    submittedAt: inq.submittedAt,
+    updatedAt: inq.updatedAt,
+    persona: x.persona,
+    contact: {
+      name: x.name,
+      mobile: x.mobile,
+      email: inq.email,
+      preferred_language: "en",
+    },
+    requirement: {
+      requested_beds: inq.beds,
+      gender_mix: { male: x.gender[0], female: x.gender[1] },
+      move_in_date: x.moveIn,
+      duration_months: x.duration,
+    },
+    preferences: { sites: [inq.siteId], room_types: [inq.roomType] },
+    answers: x.answers,
+    offer:
+      inq.status === "offer"
+        ? { proposal_no: "PRP-2026-00042", valid_until: "2026-07-20", currency: "AED", total: 138000 }
+        : undefined,
+  };
+}
 
 function stripEmail(i: (typeof MOCK_INQUIRIES)[number]): StatusInquiry {
   const { email: _email, ...rest } = i;

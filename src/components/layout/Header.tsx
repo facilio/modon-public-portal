@@ -2,16 +2,26 @@ import { Link, NavLink } from "react-router-dom";
 import { Globe } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
 import { cn } from "../../lib/cn";
+import facilioLogo from "../../assets/facilio-logo.svg";
+
+/** facilio logo (brand SVG). */
+export function FacilioMark({ className }: { className?: string }) {
+  return (
+    <img
+      src={facilioLogo}
+      alt="facilio"
+      className={cn("h-6 w-auto", className)}
+    />
+  );
+}
 
 export function Logo() {
   return (
     <Link to="/" className="flex items-center gap-3">
+      <FacilioMark />
+      <span className="h-6 w-px bg-line" />
       <span className="text-2xl font-extrabold tracking-tight text-ink">
         MODON
-      </span>
-      <span className="hidden h-5 w-px bg-line sm:block" />
-      <span className="hidden text-sm font-medium text-muted sm:block">
-        {useLang().t("brand.portal")}
       </span>
     </Link>
   );

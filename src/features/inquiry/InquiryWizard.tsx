@@ -6,7 +6,6 @@ import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Field } from "../../components/ui/Field";
 import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
 import { Stepper } from "../../components/ui/Stepper";
 import { RadioCards, RankedListField } from "./controls";
 import { DynamicField, formatAnswer, type AnswerValue } from "./DynamicField";
@@ -15,7 +14,7 @@ import { SITES, ROOM_TYPES } from "../../lib/mockData";
 import { api, ApiError, type Persona, type Template } from "../../lib/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PERSONAS: Persona[] = ["Corporate", "Sponsor", "Individual"];
+const PERSONAS: Persona[] = ["Corporate", "Sponsor"];
 
 const personaLabelKey: Record<Persona, "f.persona.company" | "f.persona.agency" | "f.persona.individual"> = {
   Corporate: "f.persona.company",
@@ -25,15 +24,14 @@ const personaLabelKey: Record<Persona, "f.persona.company" | "f.persona.agency" 
 
 interface Contact {
   fullName: string;
+  company: string;
   mobile: string;
   email: string;
-  prefLang: "en" | "ar";
 }
 interface Requirement {
   beds: string;
   male: string;
   female: string;
-  family: string;
   moveIn: string;
   duration: string;
 }
@@ -53,15 +51,14 @@ export function InquiryWizard() {
 
   const [contact, setContact] = useState<Contact>({
     fullName: "",
+    company: "",
     mobile: "",
     email: "",
-    prefLang: lang,
   });
   const [requirement, setRequirement] = useState<Requirement>({
     beds: "",
     male: "",
     female: "",
-    family: "",
     moveIn: "",
     duration: "",
   });
@@ -87,6 +84,7 @@ export function InquiryWizard() {
     let cancelled = false;
     setTemplateLoading(true);
     setTemplate(null);
+    console.log('persona', persona);
     api
       .getActiveTemplate(persona, 1)
       .then((tpl) => {
@@ -114,11 +112,14 @@ export function InquiryWizard() {
       else if (!EMAIL_RE.test(contact.email.trim())) e.email = t("err.email");
     }
     if (s === 1) {
-      if (!requirement.beds.trim() || Number(requirement.beds) <= 0)
-        e.beds = t("err.beds");
+      const beds = Number(requirement.beds) || 0;
+      if (!requirement.beds.trim() || beds <= 0) e.beds = t("err.beds");
       if (!requirement.moveIn.trim()) e.moveIn = t("err.required");
       if (!requirement.duration.trim() || Number(requirement.duration) <= 0)
         e.duration = t("err.required");
+      // Male + Female must add up to the total beds.
+      const sum = (Number(requirement.male) || 0) + (Number(requirement.female) || 0);
+      if (beds > 0 && sum !== beds) e.genderMix = t("err.genderSum", { n: beds });
     }
     if (s === 2 && template) {
       for (const q of template.questions) {
@@ -150,7 +151,6 @@ export function InquiryWizard() {
           name: contact.fullName.trim(),
           mobile: contact.mobile.trim(),
           email: contact.email.trim(),
-          preferred_language: contact.prefLang,
         });
         setInquiryId(res.inquiry_id);
         setInquiryCode(res.inquiry_code);
@@ -187,7 +187,6 @@ export function InquiryWizard() {
             gender_mix: {
               male: Number(requirement.male) || 0,
               female: Number(requirement.female) || 0,
-              family_units: Number(requirement.family) || 0,
             },
             move_in_date: requirement.moveIn,
             duration_months: Number(requirement.duration) || 0,
@@ -199,7 +198,9 @@ export function InquiryWizard() {
         },
         inquiryCode ?? undefined
       );
-      setSubmittedCode(res.inquiry_code);
+      // Fall back to the code we already have from create, so an empty response
+      // code can never leave the user on a "nothing happened" review screen.
+      setSubmittedCode(res.inquiry_code || inquiryCode || "");
       window.scrollTo({ top: 0 });
     } catch (err) {
       setApiError(err instanceof ApiError ? t("err.generic") : t("err.generic"));
@@ -372,6 +373,21 @@ function StepContact({
             invalid={!!errors.fullName}
           />
         </Field>
+        <Field
+          label={t("f.company")}
+          optionalText={t("common.optional")}
+          hint={t("f.company.hint")}
+          htmlFor="company"
+        >
+          <Input
+            id="company"
+            value={contact.company}
+            onChange={(e) =>
+              setContact((c) => ({ ...c, company: e.target.value }))
+            }
+            placeholder={t("f.company.ph")}
+          />
+        </Field>
         <Field label={t("f.mobile")} required error={errors.mobile} htmlFor="mobile">
           <Input
             id="mobile"
@@ -402,18 +418,6 @@ function StepContact({
             placeholder={t("f.email.ph")}
             invalid={!!errors.email}
           />
-        </Field>
-        <Field label={t("f.lang")} htmlFor="prefLang">
-          <Select
-            id="prefLang"
-            value={contact.prefLang}
-            onChange={(e) =>
-              setContact((c) => ({ ...c, prefLang: e.target.value as "en" | "ar" }))
-            }
-          >
-            <option value="en">{t("f.lang.en")}</option>
-            <option value="ar">{t("f.lang.ar")}</option>
-          </Select>
         </Field>
       </div>
     </div>
@@ -464,11 +468,24 @@ function StepRequirement({
         </Field>
       </div>
 
-      <Field label={t("f.genderMix")}>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <SmallNumber label={t("f.male")} value={req.male} onChange={(v) => setReq((r) => ({ ...r, male: v }))} />
-          <SmallNumber label={t("f.female")} value={req.female} onChange={(v) => setReq((r) => ({ ...r, female: v }))} />
-          <SmallNumber label={t("f.family")} value={req.family} onChange={(v) => setReq((r) => ({ ...r, family: v }))} />
+      <Field label={t("f.genderMix")} error={errors.genderMix}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SmallNumber
+            label={t("f.male")}
+            value={req.male}
+            onChange={(v) => {
+              clearError("genderMix");
+              setReq((r) => ({ ...r, male: v }));
+            }}
+          />
+          <SmallNumber
+            label={t("f.female")}
+            value={req.female}
+            onChange={(v) => {
+              clearError("genderMix");
+              setReq((r) => ({ ...r, female: v }));
+            }}
+          />
         </div>
       </Field>
 
@@ -564,34 +581,37 @@ function StepPreferences({
         </Field>
       </div>
 
-      {/* Dynamic questions from the fetched template */}
-      <div className="space-y-6 border-t border-line pt-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-          {t("wiz.moreQuestions")}
-        </h2>
-        {loading && (
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {t("wiz.loadingQuestions")}
-          </div>
-        )}
-        {!loading &&
-          template?.questions
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((q) => (
-              <DynamicField
-                key={q.id}
-                question={q}
-                value={answers[q.id]}
-                error={errors[q.id]}
-                onChange={(v) => {
-                  clearError(q.id);
-                  setAnswers((a) => ({ ...a, [q.id]: v }));
-                }}
-              />
-            ))}
-      </div>
+      {/* Dynamic questions — shown ONLY when the template actually has some
+          (or while it's still loading). Nothing renders when there are none. */}
+      {(loading || (template?.questions?.length ?? 0) > 0) && (
+        <div className="space-y-6 border-t border-line pt-8">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+            {t("wiz.moreQuestions")}
+          </h2>
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t("wiz.loadingQuestions")}
+            </div>
+          ) : (
+            template?.questions
+              .slice()
+              .sort((a, b) => a.order - b.order)
+              .map((q) => (
+                <DynamicField
+                  key={q.id}
+                  question={q}
+                  value={answers[q.id]}
+                  error={errors[q.id]}
+                  onChange={(v) => {
+                    clearError(q.id);
+                    setAnswers((a) => ({ ...a, [q.id]: v }));
+                  }}
+                />
+              ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -637,16 +657,16 @@ function StepReview({
       <ReviewSection title={t("rev.section.contact")} onEdit={() => goto(0)}>
         <Row label={t("f.persona")} value={t(personaLabelKey[persona])} />
         <Row label={t("f.fullName")} value={contact.fullName || dash} />
+        <Row label={t("f.company")} value={contact.company || dash} />
         <Row label={t("f.mobile")} value={contact.mobile || dash} />
         <Row label={t("f.email")} value={contact.email || dash} />
-        <Row label={t("f.lang")} value={contact.prefLang === "ar" ? t("f.lang.ar") : t("f.lang.en")} />
       </ReviewSection>
 
       <ReviewSection title={t("rev.section.requirement")} onEdit={() => goto(1)}>
         <Row label={t("f.beds")} value={requirement.beds || dash} />
         <Row
           label={t("f.genderMix")}
-          value={`${t("f.male")}: ${requirement.male || 0} · ${t("f.female")}: ${requirement.female || 0} · ${t("f.family")}: ${requirement.family || 0}`}
+          value={`${t("f.male")}: ${requirement.male || 0} · ${t("f.female")}: ${requirement.female || 0}`}
         />
         <Row label={t("f.moveIn")} value={requirement.moveIn || dash} />
         <Row

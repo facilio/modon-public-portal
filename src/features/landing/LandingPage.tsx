@@ -7,7 +7,6 @@ import {
   FileX,
   Building2,
   HeartHandshake,
-  User,
   ClipboardList,
   Search,
   FileText,
@@ -98,18 +97,11 @@ function PersonaSection() {
       desc: t("persona.agency.desc"),
       persona: "Sponsor",
     },
-    {
-      icon: User,
-      tint: "bg-tint-green text-emerald-600",
-      title: t("persona.individual.title"),
-      desc: t("persona.individual.desc"),
-      persona: "Individual",
-    },
   ];
 
   return (
     <Section title={t("persona.heading")} sub={t("persona.sub")}>
-      <div className="grid gap-5 md:grid-cols-3">
+      <div className="grid gap-5 md:grid-cols-2">
         {personas.map((p) => (
           <Card key={p.title} hover className="flex flex-col p-6">
             <span

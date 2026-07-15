@@ -7,14 +7,12 @@ export function Footer() {
 
   return (
     <footer className="mt-20 border-t border-line bg-white">
-      <div className="container-page grid gap-10 py-12 md:grid-cols-3">
-        <div>
+      <div className="container-page flex flex-col justify-between gap-10 py-12 md:flex-row">
+        <div className="max-w-xs">
           <span className="text-xl font-extrabold tracking-tight text-ink">
             MODON
           </span>
-          <p className="mt-3 max-w-xs text-sm text-muted">
-            {t("footer.tagline")}
-          </p>
+          <p className="mt-3 text-sm text-muted">{t("footer.tagline")}</p>
           <button
             onClick={toggle}
             className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:border-primary/40 hover:text-primary"
@@ -24,7 +22,7 @@ export function Footer() {
           </button>
         </div>
 
-        <div>
+        <div className="md:text-start">
           <h4 className="text-sm font-semibold text-ink">
             {t("footer.contact")}
           </h4>
@@ -59,21 +57,6 @@ export function Footer() {
           </ul>
         </div>
 
-        <div>
-          <h4 className="text-sm font-semibold text-ink">MODON</h4>
-          <ul className="mt-3 space-y-2.5 text-sm text-muted">
-            <li>
-              <a href="#" className="hover:text-primary">
-                {t("footer.privacy")}
-              </a>
-            </li>
-            <li>
-              <a href="#" className="hover:text-primary">
-                {t("footer.terms")}
-              </a>
-            </li>
-          </ul>
-        </div>
       </div>
 
       <div className="border-t border-line">

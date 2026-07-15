@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   ShieldCheck,
   ArrowLeft,
-  LogOut,
-  Plus,
-  MessageCircle,
   KeyRound,
   Loader2,
+  ChevronRight,
 } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
 import { Card } from "../../components/ui/Card";
@@ -16,8 +14,9 @@ import { Field } from "../../components/ui/Field";
 import { Input } from "../../components/ui/Input";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ProgressStepper } from "../../components/ui/ProgressStepper";
+import { InquiryDetailView } from "./InquiryDetail";
 import { siteById, roomTypeLabel } from "../../lib/mockData";
-import { api, type StatusInquiry } from "../../lib/api";
+import { api, type StatusInquiry, type PublicStatus } from "../../lib/api";
 import { formatDate, formatNumber } from "../../lib/format";
 import { cn } from "../../lib/cn";
 
@@ -47,6 +46,7 @@ export function StatusTracker() {
   const [cooldown, setCooldown] = useState(0);
 
   const [inquiries, setInquiries] = useState<StatusInquiry[]>([]);
+  const [selectedCode, setSelectedCode] = useState<string | null>(null);
 
   const timerRef = useRef<number>();
   useEffect(() => {
@@ -132,12 +132,13 @@ export function StatusTracker() {
     api.otpRequest(email.trim());
   }
 
-  function signOut() {
-    setPhase("auth");
-    setOtp("");
-    setCode("");
-    setInquiries([]);
+  function handleStatusChange(changedCode: string, status: PublicStatus) {
+    setInquiries((list) =>
+      list.map((i) => (i.code === changedCode ? { ...i, status } : i))
+    );
   }
+
+  console.log('phase', phase);
 
   return (
     <div className="container-page max-w-3xl py-12">
@@ -249,9 +250,20 @@ export function StatusTracker() {
         </AuthCard>
       )}
 
-      {phase === "list" && (
-        <InquiryList email={email} inquiries={inquiries} onSignOut={signOut} />
-      )}
+      {phase === "list" &&
+        (selectedCode ? (
+          <InquiryDetailView
+            code={selectedCode}
+            onBack={() => setSelectedCode(null)}
+            onStatusChange={handleStatusChange}
+          />
+        ) : (
+          <InquiryList
+            email={email}
+            inquiries={inquiries}
+            onSelect={setSelectedCode}
+          />
+        ))}
     </div>
   );
 }
@@ -313,32 +325,18 @@ function AuthCard({
 function InquiryList({
   email,
   inquiries,
-  onSignOut,
+  onSelect,
 }: {
   email: string;
   inquiries: StatusInquiry[];
-  onSignOut: () => void;
+  onSelect: (code: string) => void;
 }) {
   const { t } = useLang();
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-ink">{t("st.list.title")}</h1>
-          <p className="mt-1 text-sm text-muted">{t("st.list.sub", { email })}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to="/inquiry">
-            <Button variant="secondary">
-              <Plus className="h-4 w-4" />
-              {t("st.list.startNew")}
-            </Button>
-          </Link>
-          <Button variant="ghost" onClick={onSignOut}>
-            <LogOut className="h-4 w-4 rtl:rotate-180" />
-            {t("st.list.signout")}
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold text-ink">{t("st.list.title")}</h1>
+        <p className="mt-1 text-sm text-muted">{t("st.list.sub", { email })}</p>
       </div>
 
       {inquiries.length === 0 ? (
@@ -346,7 +344,7 @@ function InquiryList({
       ) : (
         <div className="mt-6 space-y-5">
           {inquiries.map((inq) => (
-            <InquiryCard key={inq.code} inq={inq} />
+            <InquiryCard key={inq.code} inq={inq} onSelect={onSelect} />
           ))}
         </div>
       )}
@@ -354,13 +352,19 @@ function InquiryList({
   );
 }
 
-function InquiryCard({ inq }: { inq: StatusInquiry }) {
+function InquiryCard({
+  inq,
+  onSelect,
+}: {
+  inq: StatusInquiry;
+  onSelect: (code: string) => void;
+}) {
   const { t, lang } = useLang();
   const site = siteById(inq.siteId);
   const room = roomTypeLabel(inq.roomType);
 
   return (
-    <Card className="p-6">
+    <Card className={cn("p-6", inq.status === "offer" && "border-primary/30")}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-3">
@@ -389,15 +393,14 @@ function InquiryCard({ inq }: { inq: StatusInquiry }) {
         <ProgressStepper status={inq.status} />
       </div>
 
-      <div className="mt-5 flex items-center gap-2 text-sm text-muted">
-        <span>{t("st.card.help")}</span>
-        <a
-          href="https://wa.me/9718006636"
-          className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
+      <div className="mt-5 flex items-center justify-end">
+        <Button
+          variant={inq.status === "offer" ? "primary" : "secondary"}
+          onClick={() => onSelect(inq.code)}
         >
-          <MessageCircle className="h-4 w-4" />
-          {t("st.card.helpCta")}
-        </a>
+          {inq.status === "offer" ? t("st.card.reviewOffer") : t("st.card.viewDetails")}
+          <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+        </Button>
       </div>
     </Card>
   );

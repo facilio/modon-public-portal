@@ -9,6 +9,9 @@ import {
   ApiError,
   type CreateInquiryInput,
   type CreateInquiryResult,
+  type InquiryDetail,
+  type OfferDecision,
+  type OfferDecisionResult,
   type Persona,
   type StatusInquiry,
   type SubmitInquiryInput,
@@ -93,6 +96,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, otp }),
     });
+  },
+
+  // GET /inquiries/{code} → read-only detail for the status page
+  getInquiryDetail(code: string): Promise<InquiryDetail> {
+    if (!isBackendConfigured) return mockApi.getInquiryDetail(code);
+    return request<InquiryDetail>(`/inquiries/${encodeURIComponent(code)}`);
+  },
+
+  // POST /inquiries/{code}/respond → approve/reject the offer (Offer Sent)
+  respondOffer(code: string, decision: OfferDecision): Promise<OfferDecisionResult> {
+    if (!isBackendConfigured) return mockApi.respondOffer(code, decision);
+    return request<OfferDecisionResult>(
+      `/inquiries/${encodeURIComponent(code)}/respond`,
+      { method: "POST", body: JSON.stringify({ decision }) }
+    );
   },
 };
 

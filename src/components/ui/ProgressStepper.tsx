@@ -16,10 +16,18 @@ import { cn } from "../../lib/cn";
 export function ProgressStepper({ status }: { status: PublicStatus }) {
   const { t } = useLang();
 
-  if (status === "closed") {
+  // Terminal states show a soft message instead of the 4-step bar.
+  if (status === "closed" || status === "declined") {
     return (
-      <div className="rounded-lg bg-canvas px-4 py-3 text-sm text-muted">
-        {t("status.closed.msg")}
+      <div
+        className={cn(
+          "rounded-lg px-4 py-3 text-sm",
+          status === "declined"
+            ? "bg-tint-red text-red-600"
+            : "bg-canvas text-muted"
+        )}
+      >
+        {status === "declined" ? t("status.declined.msg") : t("status.closed.msg")}
       </div>
     );
   }

@@ -7,6 +7,7 @@ const styles: Record<PublicStatus, string> = {
   review: "bg-tint-amber text-amber-700",
   offer: "bg-tint-blue text-primary",
   accepted: "bg-tint-green text-emerald-700",
+  declined: "bg-tint-red text-red-600",
   closed: "bg-slate-100 text-slate-500",
 };
 

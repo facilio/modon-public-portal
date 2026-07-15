@@ -105,9 +105,11 @@ export type PublicStatus =
   | "review"
   | "offer"
   | "accepted"
+  | "declined"
   | "closed";
 
-export const PUBLIC_STEPS: Exclude<PublicStatus, "closed">[] = [
+// Terminal states are not part of the 4-step progress bar.
+export const PUBLIC_STEPS: Exclude<PublicStatus, "closed" | "declined">[] = [
   "received",
   "review",
   "offer",
@@ -119,6 +121,7 @@ export const STATUS_LABEL: Record<PublicStatus, StringKey> = {
   review: "status.review",
   offer: "status.offer",
   accepted: "status.accepted",
+  declined: "status.declined",
   closed: "status.closed",
 };
 

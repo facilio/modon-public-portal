@@ -91,7 +91,7 @@ const en = {
   "footer.email": "leasing@modon.example",
   "footer.privacy": "Privacy Policy",
   "footer.terms": "Terms",
-  "footer.rights": "MODON Accommodation. All rights reserved.",
+  "footer.rights": "facilio. All rights reserved.",
 
   // Inquiry wizard — shell
   "wiz.title": "Start an Inquiry",
@@ -217,6 +217,22 @@ const en = {
   "st.card.beds": "{n} beds",
   "st.card.help": "Need help?",
   "st.card.helpCta": "Chat with us",
+  "st.card.viewDetails": "View details",
+  "st.card.reviewOffer": "Review offer",
+
+  // Status tracker — detail view
+  "st.detail.back": "Back to my inquiries",
+  "st.detail.additional": "Additional details",
+  "st.offer.title": "An offer is ready for your inquiry",
+  "st.offer.sub": "Please review and let us know how you’d like to proceed.",
+  "st.offer.proposalNo": "Proposal",
+  "st.offer.validUntil": "Valid until",
+  "st.offer.total": "Total",
+  "st.offer.checkEmail": "Check your email for the full proposal.",
+  "st.offer.approve": "Approve offer",
+  "st.offer.reject": "Reject offer",
+  "st.offer.approved": "You approved this offer. Our team will be in touch shortly.",
+  "st.offer.rejected": "You rejected this offer. You’re welcome to start a new inquiry anytime.",
 
   // Public status stepper + states
   "status.received": "Received",
@@ -226,11 +242,15 @@ const en = {
   "status.closed": "Closed",
   "status.closed.msg":
     "This inquiry is now closed. You’re welcome to start a new one anytime.",
+  "status.declined": "Offer Declined",
+  "status.declined.msg":
+    "You declined this offer. You’re welcome to start a new inquiry anytime.",
 
   // Generic
   "err.required": "This field is required",
   "err.email": "Enter a valid email address",
   "err.beds": "Enter a number greater than zero",
+  "err.genderSum": "Male + Female must add up to the number of beds ({n}).",
   "err.generic": "Something went wrong. Please try again.",
   "common.optional": "optional",
   "common.selected": "{n} selected",
@@ -311,7 +331,7 @@ const ar: Record<StringKey, string> = {
   "footer.email": "leasing@modon.example",
   "footer.privacy": "سياسة الخصوصية",
   "footer.terms": "الشروط",
-  "footer.rights": "مدن للإقامة. جميع الحقوق محفوظة.",
+  "footer.rights": "facilio. جميع الحقوق محفوظة.",
 
   "wiz.title": "بدء طلب",
   "wiz.sub": "أخبرنا باحتياجك. الحقول المعلّمة * إلزامية.",
@@ -428,6 +448,21 @@ const ar: Record<StringKey, string> = {
   "st.card.beds": "{n} سرير",
   "st.card.help": "تحتاج مساعدة؟",
   "st.card.helpCta": "تواصل معنا",
+  "st.card.viewDetails": "عرض التفاصيل",
+  "st.card.reviewOffer": "مراجعة العرض",
+
+  "st.detail.back": "العودة إلى طلباتي",
+  "st.detail.additional": "تفاصيل إضافية",
+  "st.offer.title": "العرض جاهز لطلبك",
+  "st.offer.sub": "يرجى المراجعة وإخبارنا بالطريقة التي تودّ المتابعة بها.",
+  "st.offer.proposalNo": "العرض",
+  "st.offer.validUntil": "صالح حتى",
+  "st.offer.total": "الإجمالي",
+  "st.offer.checkEmail": "تحقّق من بريدك الإلكتروني للاطلاع على العرض الكامل.",
+  "st.offer.approve": "قبول العرض",
+  "st.offer.reject": "رفض العرض",
+  "st.offer.approved": "لقد قبلت هذا العرض. سيتواصل فريقنا معك قريباً.",
+  "st.offer.rejected": "لقد رفضت هذا العرض. يمكنك بدء طلب جديد في أي وقت.",
 
   "status.received": "تم الاستلام",
   "status.review": "قيد المراجعة",
@@ -435,10 +470,13 @@ const ar: Record<StringKey, string> = {
   "status.accepted": "تم قبول العرض",
   "status.closed": "مغلق",
   "status.closed.msg": "هذا الطلب مغلق الآن. يمكنك بدء طلب جديد في أي وقت.",
+  "status.declined": "تم رفض العرض",
+  "status.declined.msg": "لقد رفضت هذا العرض. يمكنك بدء طلب جديد في أي وقت.",
 
   "err.required": "هذا الحقل مطلوب",
   "err.email": "أدخل بريداً إلكترونياً صالحاً",
   "err.beds": "أدخل رقماً أكبر من صفر",
+  "err.genderSum": "يجب أن يساوي مجموع الذكور والإناث عدد الأسرّة ({n}).",
   "err.generic": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
   "common.optional": "اختياري",
   "common.selected": "{n} محدّد",
