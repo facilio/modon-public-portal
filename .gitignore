@@ -7,3 +7,6 @@ dist-ssr
 .DS_Store
 .env.*
 !.env.example
+
+# Lambda deploy artifact (built on demand, not versioned)
+gateway.zip
