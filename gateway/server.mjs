@@ -508,7 +508,107 @@ async function getInquiryByCode(code) {
   return { status: 200, body: mapInquiryDetail(records[0], status) };
 }
 
-// ── HTTP plumbing ──────────────────────────────────────────────────────────────
+// ── Shared router ────────────────────────────────────────────────────────────
+// Transport-agnostic: takes the parsed request, returns { status, headers, body }.
+// Both the local dev HTTP server and the Lambda handler call this — one source
+// of routing truth, so dev and prod behave identically.
+async function route({ method, path, query, body, origin }) {
+  const cors = corsHeaders(origin);
+  const done = (status, resBody) => ({ status, headers: cors, body: resBody });
+
+  try {
+    if (method === "OPTIONS") return { status: 204, headers: cors, body: null };
+
+    if (method === "GET" && path === "/templates/active") {
+      const persona = query.persona ?? "Corporate";
+      const { status, body: b } = await getActiveTemplate(persona);
+      return done(status, b);
+    }
+
+    if (method === "GET" && path === "/room-types") {
+      const { status, body: b } = await getRoomTypes();
+      return done(status, b);
+    }
+
+    if (method === "POST" && path === "/inquiries") {
+      const { persona, name, company, mobile, email } = body ?? {};
+      if (!name || !mobile || !email)
+        return done(400, { error: "name, mobile and email are required" });
+      const { status, body: b } = await createInquiry({ persona, name, company, mobile, email });
+      return done(status, b);
+    }
+
+    const submitMatch = path.match(/^\/inquiries\/([^/]+)\/submit$/);
+    if (method === "POST" && submitMatch) {
+      const { status, body: b } = await submitInquiry(
+        decodeURIComponent(submitMatch[1]),
+        body ?? {}
+      );
+      return done(status, b);
+    }
+
+    if (method === "POST" && path === "/status/lookup") {
+      const { code, email } = body ?? {};
+      if (!code || !email)
+        return done(400, { error: "code and email are required" });
+      const { status, body: b } = await statusLookup(String(code), String(email));
+      return done(status, b);
+    }
+
+    const detailMatch = path.match(/^\/inquiries\/([^/]+)$/);
+    if (method === "GET" && detailMatch) {
+      const { status, body: b } = await getInquiryByCode(decodeURIComponent(detailMatch[1]));
+      return done(status, b);
+    }
+
+    // Not wired yet (need their Facilio call shapes).
+    if (method === "POST" && (path === "/status/otp/request" || path === "/status/otp/verify")) {
+      return done(501, { error: "Not implemented yet in the gateway", route: `${method} ${path}` });
+    }
+
+    return done(404, { error: "Not found" });
+  } catch (err) {
+    console.error(`[gateway] ERROR ${method} ${path}: ${err?.message ?? err}`);
+    if (err?.stack) console.error(err.stack);
+    return done(400, { error: err?.message ?? "Bad request" });
+  }
+}
+
+// ── Lambda entry point (Function URL / API Gateway HTTP API, payload v2) ──────
+export async function handler(event) {
+  const method = event?.requestContext?.http?.method ?? "GET";
+  const path = event?.rawPath ?? "/";
+  const query = event?.queryStringParameters ?? {};
+  const origin = event?.headers?.origin ?? event?.headers?.Origin;
+
+  let body = {};
+  if (event?.body) {
+    const raw = event.isBase64Encoded
+      ? Buffer.from(event.body, "base64").toString("utf8")
+      : event.body;
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch {
+      return {
+        statusCode: 400,
+        headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+        body: JSON.stringify({ error: "Invalid JSON body" }),
+      };
+    }
+  }
+
+  const res = await route({ method, path, query, body, origin });
+  return {
+    statusCode: res.status,
+    headers: { "Content-Type": "application/json", ...(res.headers ?? {}) },
+    body: res.body == null ? "" : JSON.stringify(res.body),
+  };
+}
+
+// ── Local dev HTTP server ────────────────────────────────────────────────────
+// Only runs when executed directly (node server.mjs). On Lambda the module is
+// imported for its `handler` export, so AWS_LAMBDA_FUNCTION_NAME is set and we
+// never bind a port.
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -527,114 +627,43 @@ function readJson(req) {
   });
 }
 
-function send(res, status, headers, body) {
-  console.log('result', res);
-  res.writeHead(status, { "Content-Type": "application/json", ...headers });
-  res.end(JSON.stringify(body));
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    let body = {};
+    if (req.method === "POST") {
+      try {
+        body = await readJson(req);
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        return res.end(JSON.stringify({ error: err?.message ?? "Bad request" }));
+      }
+    }
+    const q = Object.fromEntries(url.searchParams);
+    const r = await route({
+      method: req.method,
+      path: url.pathname,
+      query: q,
+      body,
+      origin: req.headers.origin,
+    });
+    res.writeHead(r.status, { "Content-Type": "application/json", ...(r.headers ?? {}) });
+    res.end(r.body == null ? "" : JSON.stringify(r.body));
+  });
+
+  server.listen(PORT, () => {
+    console.log(`[gateway] listening on http://localhost:${PORT}`);
+    console.log(`[gateway] Facilio: ${FACILIO_BASE_URL}`);
+    console.log(
+      `[gateway] modules: inquiry=${INQUIRY_MODULE} template=${TEMPLATE_MODULE} roomtype=${ROOMTYPE_MODULE}`
+    );
+    console.log(
+      `[gateway] inquiry fields: company=${IF.company || "(off)"} roomTypes=${
+        IF.roomType || "(off)"
+      } services=${IF.services || "(off)"}`
+    );
+    console.log(`[gateway] allowed origins: ${CORS_ORIGINS.join(", ")}`);
+    console.log(`[gateway] routes: GET /templates/active · GET /room-types · POST /inquiries · POST /inquiries/{id}/submit · POST /status/lookup · GET /inquiries/{code} · (501) status/otp/*`);
+    if (!FACILIO_API_KEY) console.warn("[gateway] WARNING: FACILIO_API_KEY is not set");
+  });
 }
-
-const server = createServer(async (req, res) => {
-  const cors = corsHeaders(req.headers.origin);
-  const url = new URL(req.url, `http://localhost:${PORT}`);
-  const path = url.pathname;
-
-  try {
-    // Preflight
-    if (req.method === "OPTIONS") {
-      res.writeHead(204, cors);
-      return res.end();
-    }
-
-    // GET /templates/active
-    if (req.method === "GET" && path === "/templates/active") {
-      const persona = url.searchParams.get("persona") ?? "Corporate";
-      const { status, body } = await getActiveTemplate(persona);
-      return send(res, status, cors, body);
-    }
-
-    // GET /room-types
-    if (req.method === "GET" && path === "/room-types") {
-      const { status, body } = await getRoomTypes();
-      return send(res, status, cors, body);
-    }
-
-    // POST /inquiries
-    if (req.method === "POST" && path === "/inquiries") {
-      const input = (await readJson(req)) ?? {};
-      const { persona, name, company, mobile, email } = input;
-      if (!name || !mobile || !email)
-        return send(res, 400, cors, { error: "name, mobile and email are required" });
-      const { status, body } = await createInquiry({
-        persona,
-        name,
-        company,
-        mobile,
-        email,
-      });
-      return send(res, status, cors, body);
-    }
-
-    // POST /inquiries/{id}/submit
-    const submitMatch = path.match(/^\/inquiries\/([^/]+)\/submit$/);
-    if (req.method === "POST" && submitMatch) {
-      const input = (await readJson(req)) ?? {};
-      const { status, body } = await submitInquiry(
-        decodeURIComponent(submitMatch[1]),
-        input
-      );
-      return send(res, status, cors, body);
-    }
-
-    // POST /status/lookup (Code + Email)
-    if (req.method === "POST" && path === "/status/lookup") {
-      const { code, email } = (await readJson(req)) ?? {};
-      if (!code || !email)
-        return send(res, 400, cors, { error: "code and email are required" });
-      const { status, body } = await statusLookup(String(code), String(email));
-      return send(res, status, cors, body);
-    }
-
-    // GET /inquiries/{code} — read-only detail
-    const detailMatch = path.match(/^\/inquiries\/([^/]+)$/);
-    if (req.method === "GET" && detailMatch) {
-      const { status, body } = await getInquiryByCode(
-        decodeURIComponent(detailMatch[1])
-      );
-      return send(res, status, cors, body);
-    }
-
-    // Routes still needing their Facilio call shapes before they can be wired.
-    const notWired =
-      (req.method === "POST" && path === "/status/otp/request") ||
-      (req.method === "POST" && path === "/status/otp/verify");
-    if (notWired) {
-      return send(res, 501, cors, {
-        error: "Not implemented yet in the gateway",
-        route: `${req.method} ${path}`,
-      });
-    }
-
-    send(res, 404, cors, { error: "Not found" });
-  } catch (err) {
-    // Log the failing route + full stack so the cause is visible in the console.
-    console.error(`[gateway] ERROR ${req.method} ${path}: ${err?.message ?? err}`);
-    if (err?.stack) console.error(err.stack);
-    send(res, 400, cors, { error: err?.message ?? "Bad request" });
-  }
-});
-
-server.listen(PORT, () => {
-  console.log(`[gateway] listening on http://localhost:${PORT}`);
-  console.log(`[gateway] Facilio: ${FACILIO_BASE_URL}`);
-  console.log(
-    `[gateway] modules: inquiry=${INQUIRY_MODULE} template=${TEMPLATE_MODULE} roomtype=${ROOMTYPE_MODULE}`
-  );
-  console.log(
-    `[gateway] inquiry fields: company=${IF.company || "(off)"} roomTypes=${
-      IF.roomType || "(off)"
-    } services=${IF.services || "(off)"}`
-  );
-  console.log(`[gateway] allowed origins: ${CORS_ORIGINS.join(", ")}`);
-  console.log(`[gateway] routes: GET /templates/active · GET /room-types · POST /inquiries · POST /inquiries/{id}/submit · POST /status/lookup · GET /inquiries/{code} · (501) status/otp/*`);
-  if (!FACILIO_API_KEY) console.warn("[gateway] WARNING: FACILIO_API_KEY is not set");
-});
