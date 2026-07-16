@@ -17,9 +17,56 @@ const PORT = process.env.PORT ?? 8787;
 const FACILIO_BASE_URL =
   process.env.FACILIO_BASE_URL ?? "https://app.facilio.co.ae/AccommodationManagement";
 const FACILIO_API_KEY = process.env.FACILIO_API_KEY;
+// ── Module names ─────────────────────────────────────────────────────────────
+// These vary by deployment/org (dev/sandbox/prod clones), so they stay in env.
 const INQUIRY_MODULE = process.env.FACILIO_INQUIRY_MODULE ?? "custom_inquiries";
 const TEMPLATE_MODULE =
   process.env.FACILIO_TEMPLATE_MODULE ?? "custom_questionnairetemplate";
+// Room type is a LOOKUP to this module (same one rate cards / accommodation use).
+// Read to serve GET /room-types.
+const ROOMTYPE_MODULE = process.env.FACILIO_ROOMTYPE_MODULE ?? "custom_roomtype";
+
+// ── custom_inquiries field link names — SINGLE SOURCE OF TRUTH ───────────────
+// Every custom_inquiries column the gateway reads or writes lives here, as plain
+// literals from the module meta. Field names are code, not per-deployment config
+// (unlike module names / URL / key, which stay in env). Rename in ONE place.
+const IF = {
+  // identity / contact (written at create)
+  name: "name", // main field — holds the contact's full name
+  code: "inquiry_code_custom_inquiries",
+  persona: "persona_custom_inquiries",
+  mobile: "mobile_custom_inquiries",
+  email: "email_custom_inquiries",
+  company: "company_name_custom_inquiries",
+  // requirement (written at submit)
+  beds: "requested_beds_custom_inquiries",
+  duration: "duration_months_custom_inquiries",
+  gender: "gender_mix_custom_inquiries",
+  moveIn: "move_in_date_custom_inquiries",
+  roomType: "room_type_custom_inquiries",
+  services: "services_custom_inquiries",
+  // questionnaire (written at submit)
+  template: "questionnaire_template_custom_inquiries",
+  answers: "questionnaire_answers_custom_inquiries",
+};
+
+// Service option values in the SAME order as the Facilio services multi-enum
+// (mirrors services_custom_proposal / services_custom_contract). A submitted
+// value maps to its 1-based enum option id by this index.
+const INQUIRY_SERVICE_VALUES = [
+  "cleaning",
+  "catering",
+  "laundry",
+  "mess_hall",
+  "food_parcel",
+  "wifi",
+  "access_card",
+];
+function serviceValuesToIds(values) {
+  return (values ?? [])
+    .map((v) => INQUIRY_SERVICE_VALUES.indexOf(v) + 1)
+    .filter((n) => n > 0);
+}
 const CORS_ORIGINS = (process.env.CORS_ORIGIN ?? "http://localhost:5173")
   .split(",")
   .map((o) => o.trim());
@@ -42,8 +89,18 @@ const T = {
 };
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
+// A localhost origin only ever exists on the developer's own machine and the
+// browser sets Origin itself (a page can't spoof it), so reflecting ANY
+// localhost/127.0.0.1 port is safe and saves chasing Vite's auto-incremented
+// port. Non-localhost origins still must be in the CORS_ORIGIN allowlist — in
+// production that's the real portal domain, and localhost never appears there.
+function isLocalhostOrigin(origin) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin ?? "");
+}
+
 function corsHeaders(reqOrigin) {
-  const allow = CORS_ORIGINS.includes(reqOrigin) ? reqOrigin : CORS_ORIGINS[0];
+  const allowed = CORS_ORIGINS.includes(reqOrigin) || isLocalhostOrigin(reqOrigin);
+  const allow = allowed ? reqOrigin : CORS_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -58,7 +115,20 @@ async function facilioFetch(path, init) {
   // when the request actually has a body.
   const headers = { "x-api-key": FACILIO_API_KEY, ...(init?.headers ?? {}) };
   if (init?.body) headers["Content-Type"] = "application/json";
-  const res = await fetch(`${FACILIO_BASE_URL}${path}`, { ...init, headers });
+  const method = init?.method ?? "GET";
+
+  let res;
+  try {
+    res = await fetch(`${FACILIO_BASE_URL}${path}`, { ...init, headers });
+  } catch (err) {
+    // Network/DNS/TLS failure — the request never reached Facilio.
+    console.error(
+      `[facilio] FETCH FAILED ${method} ${path}: ${err?.message ?? err}`
+    );
+    if (init?.body) console.error(`[facilio]   request body: ${init.body}`);
+    throw err;
+  }
+
   const text = await res.text();
   let body;
   try {
@@ -66,6 +136,14 @@ async function facilioFetch(path, init) {
   } catch {
     body = { raw: text };
   }
+
+  // Log every non-2xx from Facilio with enough context to see WHY it failed.
+  if (res.status >= 400) {
+    console.error(`[facilio] ${res.status} ${method} ${path}`);
+    if (init?.body) console.error(`[facilio]   request body: ${init.body}`);
+    console.error(`[facilio]   response: ${text || "(empty)"}`);
+  }
+
   return { status: res.status, body };
 }
 
@@ -168,27 +246,46 @@ function parseQuestions(raw) {
     }));
 }
 
+// ── GET /room-types ─────────────────────────────────────────────────────────
+// Room-type lookup options (custom_roomtype records) → [{id, name}] for the
+// portal's Requirement-step multi-select.
+async function getRoomTypes() {
+  if (!FACILIO_API_KEY)
+    return { status: 500, body: { error: "Gateway missing FACILIO_API_KEY" } };
+  const { status, body } = await facilioFetch(
+    `/api/v3/modules/${ROOMTYPE_MODULE}?perPage=200`,
+    { method: "GET" }
+  );
+  if (status >= 400) return { status, body };
+  const opts = unwrapList(body, ROOMTYPE_MODULE)
+    .filter((r) => r?.id != null)
+    .map((r) => ({ id: String(r.id), name: String(r.name ?? r.id) }));
+  return { status: 200, body: opts };
+}
+
 // ── POST /inquiries ───────────────────────────────────────────────────────────
-// Creates the Draft inquiry. Sends only the fields the portal collects, using
-// the module's _custom_inquiries link names; the gateway mints the public code.
-async function createInquiry({ persona, name, mobile, email }) {
+// Creates the Draft inquiry. Stores ONLY the details the portal collects onto
+// the inquiry itself (no Client/Account record is created here — that happens
+// later via the staff "Qualify" button script, facilio-scripts/). The gateway
+// mints the public code.
+async function createInquiry({ persona, name, company, mobile, email }) {
   if (!FACILIO_API_KEY)
     return { status: 500, body: { error: "Gateway missing FACILIO_API_KEY" } };
 
   const inquiryCode = generateInquiryCode();
-  const payload = {
-    data: {
-      name,
-      inquiry_code_custom_inquiries: inquiryCode,
-      persona_custom_inquiries: personaIndex(persona),
-      mobile_custom_inquiries: mobile,
-      email_custom_inquiries: email,
-    },
+  const data = {
+    [IF.name]: name,
+    [IF.code]: inquiryCode,
+    [IF.persona]: personaIndex(persona),
+    [IF.mobile]: mobile,
+    [IF.email]: email,
   };
+  // Persist the company/organisation on the inquiry when a field is configured.
+  if (IF.company && company) data[IF.company] = company;
 
   const { status, body } = await facilioFetch(`/api/v3/modules/${INQUIRY_MODULE}`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ data }),
   });
   if (status >= 400) return { status, body };
 
@@ -200,7 +297,7 @@ async function createInquiry({ persona, name, mobile, email }) {
     status: 200,
     body: {
       inquiry_id: String(rec.id ?? ""),
-      inquiry_code: rec.inquiry_code_custom_inquiries ?? inquiryCode,
+      inquiry_code: rec[IF.code] ?? inquiryCode,
     },
   };
 }
@@ -217,18 +314,31 @@ async function submitInquiry(inquiryId, input) {
 
   const r = input?.requirement ?? {};
   const data = {};
-  if (r.requested_beds != null) data.requested_beds_custom_inquiries = Number(r.requested_beds);
-  if (r.duration_months != null) data.duration_months_custom_inquiries = Number(r.duration_months);
-  if (r.gender_mix) data.gender_mix_custom_inquiries = JSON.stringify(r.gender_mix);
+  if (r.requested_beds != null) data[IF.beds] = Number(r.requested_beds);
+  if (r.duration_months != null) data[IF.duration] = Number(r.duration_months);
+  if (r.gender_mix) data[IF.gender] = JSON.stringify(r.gender_mix);
   const moveInMs = toEpochMs(r.move_in_date); // DATE_TIME field expects epoch ms
-  if (moveInMs != null) data.move_in_date_custom_inquiries = moveInMs;
+  if (moveInMs != null) data[IF.moveIn] = moveInMs;
+
+  // Requirement extras (only when their fields are configured):
+  //   room types → MULTI_LOOKUP (array of {id}); services → MULTI_ENUM (ids).
+  if (IF.roomType) {
+    const ids = (input?.room_type_ids ?? [])
+      .map((id) => Number(id))
+      .filter((n) => !Number.isNaN(n));
+    if (ids.length) data[IF.roomType] = ids.map((id) => ({ id }));
+  }
+  if (IF.services) {
+    const serviceIds = serviceValuesToIds(input?.services);
+    if (serviceIds.length) data[IF.services] = serviceIds;
+  }
 
   // Dynamic questionnaire → stored on the inquiry itself.
   const templateId = Number(input?.template_id);
   const answers = input?.answers ?? {};
   const hasAnswers = answers && Object.keys(answers).length > 0;
-  if (templateId) data.questionnaire_template_custom_inquiries = { id: templateId };
-  if (hasAnswers) data.questionnaire_answers_custom_inquiries = JSON.stringify(answers);
+  if (templateId) data[IF.template] = { id: templateId };
+  if (hasAnswers) data[IF.answers] = JSON.stringify(answers);
 
   // Facilio v3 partial update: PATCH /api/v3/modules/{module}/{id}.
   const { status, body } = await facilioFetch(
@@ -242,7 +352,7 @@ async function submitInquiry(inquiryId, input) {
 
   return {
     status: 200,
-    body: { ok: true, inquiry_code: rec.inquiry_code_custom_inquiries ?? "" },
+    body: { ok: true, inquiry_code: rec[IF.code] ?? "" },
   };
 }
 
@@ -254,18 +364,7 @@ function toEpochMs(dateStr) {
 }
 
 // ── Status lookup + detail ──────────────────────────────────────────────────────
-// custom_inquiries field link names.
-const I = {
-  code: "inquiry_code_custom_inquiries",
-  email: "email_custom_inquiries",
-  mobile: "mobile_custom_inquiries",
-  persona: "persona_custom_inquiries",
-  beds: "requested_beds_custom_inquiries",
-  gender: "gender_mix_custom_inquiries",
-  moveIn: "move_in_date_custom_inquiries",
-  duration: "duration_months_custom_inquiries",
-};
-
+// Field names come from the shared IF map above (single source of truth).
 function personaLabel(idx) {
   return PERSONA_ORDER[Number(idx) - 1] ?? "Corporate";
 }
@@ -337,8 +436,8 @@ async function findInquiries(filters) {
 /** Raw record → portal StatusInquiry (list summary). */
 function mapStatusInquiry(rec, status) {
   return {
-    code: rec[I.code] ?? "",
-    beds: Number(rec[I.beds] ?? 0),
+    code: rec[IF.code] ?? "",
+    beds: Number(rec[IF.beds] ?? 0),
     siteId: "", // site_preference not persisted yet
     roomType: "", // room_type_preference not persisted yet
     submittedAt: toIso(rec.sysCreatedTime),
@@ -351,30 +450,30 @@ function mapStatusInquiry(rec, status) {
 function mapInquiryDetail(rec, status) {
   let gender = { male: 0, female: 0 };
   try {
-    if (rec[I.gender]) gender = JSON.parse(rec[I.gender]);
+    if (rec[IF.gender]) gender = JSON.parse(rec[IF.gender]);
   } catch {
     /* leave zeros on malformed JSON */
   }
-  const moveMs = Number(rec[I.moveIn]);
+  const moveMs = Number(rec[IF.moveIn]);
   return {
-    code: rec[I.code] ?? "",
+    code: rec[IF.code] ?? "",
     status,
     submittedAt: toIso(rec.sysCreatedTime),
     updatedAt: toIso(rec.sysModifiedTime),
-    persona: personaLabel(rec[I.persona]),
+    persona: personaLabel(rec[IF.persona]),
     contact: {
       name: rec.name ?? "",
-      mobile: rec[I.mobile] ?? "",
-      email: rec[I.email] ?? "",
+      mobile: rec[IF.mobile] ?? "",
+      email: rec[IF.email] ?? "",
       preferred_language: "en", // not persisted yet
     },
     requirement: {
-      requested_beds: Number(rec[I.beds] ?? 0),
+      requested_beds: Number(rec[IF.beds] ?? 0),
       gender_mix: gender,
       move_in_date: moveMs ? new Date(moveMs).toISOString().slice(0, 10) : "",
-      duration_months: Number(rec[I.duration] ?? 0),
+      duration_months: Number(rec[IF.duration] ?? 0),
     },
-    preferences: { sites: [], room_types: [] }, // preferences not persisted yet
+    requirement_extra: { room_types: [], services: [] }, // resolved labels TODO
     answers: [], // questionnaire response not persisted yet
   };
 }
@@ -384,8 +483,8 @@ async function statusLookup(code, email) {
   if (!FACILIO_API_KEY)
     return { status: 500, body: { error: "Gateway missing FACILIO_API_KEY" } };
   const { records, error } = await findInquiries({
-    [I.email]: eq(email),
-    [I.code]: eq(code),
+    [IF.email]: eq(email),
+    [IF.code]: eq(code),
     oneLevelLookup: {},
   });
   if (error) return error;
@@ -400,7 +499,7 @@ async function getInquiryByCode(code) {
   if (!FACILIO_API_KEY)
     return { status: 500, body: { error: "Gateway missing FACILIO_API_KEY" } };
   const { records, error } = await findInquiries({
-    [I.code]: eq(code),
+    [IF.code]: eq(code),
     oneLevelLookup: {},
   });
   if (error) return error;
@@ -429,6 +528,7 @@ function readJson(req) {
 }
 
 function send(res, status, headers, body) {
+  console.log('result', res);
   res.writeHead(status, { "Content-Type": "application/json", ...headers });
   res.end(JSON.stringify(body));
 }
@@ -452,13 +552,25 @@ const server = createServer(async (req, res) => {
       return send(res, status, cors, body);
     }
 
+    // GET /room-types
+    if (req.method === "GET" && path === "/room-types") {
+      const { status, body } = await getRoomTypes();
+      return send(res, status, cors, body);
+    }
+
     // POST /inquiries
     if (req.method === "POST" && path === "/inquiries") {
       const input = (await readJson(req)) ?? {};
-      const { persona, name, mobile, email } = input;
+      const { persona, name, company, mobile, email } = input;
       if (!name || !mobile || !email)
         return send(res, 400, cors, { error: "name, mobile and email are required" });
-      const { status, body } = await createInquiry({ persona, name, mobile, email });
+      const { status, body } = await createInquiry({
+        persona,
+        name,
+        company,
+        mobile,
+        email,
+      });
       return send(res, status, cors, body);
     }
 
@@ -504,6 +616,9 @@ const server = createServer(async (req, res) => {
 
     send(res, 404, cors, { error: "Not found" });
   } catch (err) {
+    // Log the failing route + full stack so the cause is visible in the console.
+    console.error(`[gateway] ERROR ${req.method} ${path}: ${err?.message ?? err}`);
+    if (err?.stack) console.error(err.stack);
     send(res, 400, cors, { error: err?.message ?? "Bad request" });
   }
 });
@@ -511,8 +626,15 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[gateway] listening on http://localhost:${PORT}`);
   console.log(`[gateway] Facilio: ${FACILIO_BASE_URL}`);
-  console.log(`[gateway] modules: inquiry=${INQUIRY_MODULE} template=${TEMPLATE_MODULE}`);
+  console.log(
+    `[gateway] modules: inquiry=${INQUIRY_MODULE} template=${TEMPLATE_MODULE} roomtype=${ROOMTYPE_MODULE}`
+  );
+  console.log(
+    `[gateway] inquiry fields: company=${IF.company || "(off)"} roomTypes=${
+      IF.roomType || "(off)"
+    } services=${IF.services || "(off)"}`
+  );
   console.log(`[gateway] allowed origins: ${CORS_ORIGINS.join(", ")}`);
-  console.log(`[gateway] routes: GET /templates/active · POST /inquiries · POST /inquiries/{id}/submit · POST /status/lookup · GET /inquiries/{code} · (501) status/otp/*`);
+  console.log(`[gateway] routes: GET /templates/active · GET /room-types · POST /inquiries · POST /inquiries/{id}/submit · POST /status/lookup · GET /inquiries/{code} · (501) status/otp/*`);
   if (!FACILIO_API_KEY) console.warn("[gateway] WARNING: FACILIO_API_KEY is not set");
 });

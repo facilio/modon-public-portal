@@ -34,8 +34,14 @@ export interface Template {
 // ── POST /inquiries (Step 1: create Draft) ───────────────────────────────────
 export interface CreateInquiryInput {
   persona: Persona;
+  /** Primary contact person's name. Stored on the inquiry. */
   name: string;
+  /** Company / organisation name. Stored on the inquiry; used by the staff
+   *  "Qualify" script to create/link the Account. */
+  company: string;
+  /** Stored on the inquiry. */
   mobile: string;
+  /** Stored on the inquiry; also the status-lookup key. */
   email: string;
 }
 
@@ -57,10 +63,10 @@ export interface FixedRequirement {
   duration_months: number;
 }
 
-export interface FixedPreferences {
-  /** Ranked: index 0 = 1st choice. */
-  site_preference: string[];
-  room_type_preference: string[];
+/** One room-type option — a record from the custom_roomtype module (lookup). */
+export interface RoomTypeOption {
+  id: string;
+  name: string;
 }
 
 export interface SubmitInquiryInput {
@@ -69,12 +75,15 @@ export interface SubmitInquiryInput {
   /** Dynamic answers keyed by question id. */
   answers: Record<string, unknown>;
   /**
-   * Fixed Inquiry columns collected across Steps 2–3. Documented as a superset
-   * of the brief's minimal {template_id, template_version, answers} body so no
-   * data is lost; the backend session can consume or ignore these keys.
+   * Fixed Inquiry columns collected in the Requirement step. Documented as a
+   * superset of the brief's minimal {template_id, template_version, answers}
+   * body so no data is lost; the backend session can consume or ignore keys.
    */
   requirement: FixedRequirement;
-  preferences: FixedPreferences;
+  /** Selected custom_roomtype record ids (multi-lookup). */
+  room_type_ids: string[];
+  /** Selected service option values (multi-enum), see INQUIRY_SERVICES. */
+  services: string[];
 }
 
 export interface SubmitInquiryResult {
@@ -140,10 +149,10 @@ export interface InquiryDetail {
     move_in_date: string;
     duration_months: number;
   };
-  /** Ranked preferences as ids/values (index order = rank); UI resolves labels. */
-  preferences: {
-    sites: string[]; // site ids
-    room_types: string[]; // room type values
+  /** Resolved labels for display on the status page. */
+  requirement_extra: {
+    room_types: string[]; // room-type names
+    services: string[]; // service labels
   };
   /** Resolved dynamic questionnaire answers. */
   answers: AnswerRow[];

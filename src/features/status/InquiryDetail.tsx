@@ -12,7 +12,6 @@ import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ProgressStepper } from "../../components/ui/ProgressStepper";
-import { siteById, roomTypeLabel } from "../../lib/mockData";
 import { formatDate, formatNumber } from "../../lib/format";
 import {
   api,
@@ -141,16 +140,13 @@ export function InquiryDetailView({
               label={t("f.duration")}
               value={`${detail.requirement.duration_months} ${t("f.months")}`}
             />
-          </ReadonlySection>
-
-          <ReadonlySection title={t("rev.section.preferences")}>
             <Row
-              label={t("f.sites")}
-              value={rankedLabels(detail.preferences.sites, (id) => siteById(id)?.name[lang]) || t("rev.notProvided")}
+              label={t("f.roomTypes")}
+              value={detail.requirement_extra.room_types.join(", ") || t("rev.notProvided")}
             />
             <Row
-              label={t("f.roomType")}
-              value={rankedLabels(detail.preferences.room_types, (v) => roomTypeLabel(v)?.label[lang]) || t("rev.notProvided")}
+              label={t("f.services")}
+              value={detail.requirement_extra.services.join(", ") || t("rev.notProvided")}
             />
           </ReadonlySection>
 
@@ -310,11 +306,4 @@ function Row({ label, value }: { label: string; value: string }) {
       <dd className="font-medium text-ink-soft">{value}</dd>
     </div>
   );
-}
-
-/** "1. ICAD, 2. KEZAD" from ranked ids + a label resolver. */
-function rankedLabels(ids: string[], resolve: (id: string) => string | undefined): string {
-  return ids
-    .map((id, i) => `${i + 1}. ${resolve(id) ?? id}`)
-    .join("  ");
 }

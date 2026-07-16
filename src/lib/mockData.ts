@@ -64,6 +64,31 @@ export const ROOM_TYPES: Option[] = [
   { value: "family", label: { en: "Family unit", ar: "وحدة عائلية" } },
 ];
 
+// Standalone/mock fallback for the custom_roomtype lookup options. Embedded,
+// the portal fetches the live list from the gateway (GET /room-types).
+export const MOCK_ROOM_TYPES: { id: string; name: string }[] = [
+  { id: "rt-studio", name: "Studio" },
+  { id: "rt-1bhk", name: "1BHK" },
+  { id: "rt-2bhk", name: "2BHK" },
+  { id: "rt-shared-2", name: "Shared-2" },
+  { id: "rt-shared-4", name: "Shared-4" },
+  { id: "rt-shared-6", name: "Shared-6" },
+];
+
+// Inquiry SERVICES — a MULTI_ENUM whose ORDER must mirror the Facilio
+// services_custom_inquiries enum (1-indexed), same set/order as
+// services_custom_proposal / services_custom_contract so the deal maps cleanly
+// downstream. The gateway maps each `value` → its 1-based option id by THIS order.
+export const INQUIRY_SERVICES: Option[] = [
+  { value: "cleaning", label: { en: "Cleaning", ar: "التنظيف" } },
+  { value: "catering", label: { en: "Catering", ar: "الإعاشة" } },
+  { value: "laundry", label: { en: "Laundry", ar: "الغسيل" } },
+  { value: "mess_hall", label: { en: "Mess Hall", ar: "قاعة الطعام" } },
+  { value: "food_parcel", label: { en: "Food parcel", ar: "طرود غذائية" } },
+  { value: "wifi", label: { en: "Wi-Fi", ar: "واي فاي" } },
+  { value: "access_card", label: { en: "Access Card Provision", ar: "توفير بطاقة الدخول" } },
+];
+
 export const BUDGET_BANDS: Option[] = [
   { value: "any", label: { en: "No preference", ar: "لا تفضيل" } },
   { value: "u800", label: { en: "Under AED 800", ar: "أقل من ٨٠٠ درهم" } },

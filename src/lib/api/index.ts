@@ -13,6 +13,7 @@ import {
   type OfferDecision,
   type OfferDecisionResult,
   type Persona,
+  type RoomTypeOption,
   type StatusInquiry,
   type SubmitInquiryInput,
   type SubmitInquiryResult,
@@ -46,6 +47,12 @@ export const api = {
     return request<Template>(
       `/templates/active?persona=${encodeURIComponent(persona)}&layer=${layer}`
     );
+  },
+
+  // GET /room-types → the custom_roomtype lookup options
+  getRoomTypes(): Promise<RoomTypeOption[]> {
+    if (!isBackendConfigured) return mockApi.getRoomTypes();
+    return request<RoomTypeOption[]>("/room-types");
   },
 
   // POST /inquiries  → creates Inquiry (NEW + Draft)

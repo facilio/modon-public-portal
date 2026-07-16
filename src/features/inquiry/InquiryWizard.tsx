@@ -7,11 +7,17 @@ import { Button } from "../../components/ui/Button";
 import { Field } from "../../components/ui/Field";
 import { Input } from "../../components/ui/Input";
 import { Stepper } from "../../components/ui/Stepper";
-import { RadioCards, RankedListField } from "./controls";
+import { RadioCards, ChipMultiSelect } from "./controls";
 import { DynamicField, formatAnswer, type AnswerValue } from "./DynamicField";
 import { SuccessScreen } from "./SuccessScreen";
-import { SITES, ROOM_TYPES } from "../../lib/mockData";
-import { api, ApiError, type Persona, type Template } from "../../lib/api";
+import { INQUIRY_SERVICES } from "../../lib/mockData";
+import {
+  api,
+  ApiError,
+  type Persona,
+  type RoomTypeOption,
+  type Template,
+} from "../../lib/api";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PERSONAS: Persona[] = ["Corporate", "Sponsor"];
@@ -34,10 +40,6 @@ interface Requirement {
   female: string;
   moveIn: string;
   duration: string;
-}
-interface Prefs {
-  sites: string[];
-  roomTypes: string[];
 }
 
 export function InquiryWizard() {
@@ -62,9 +64,14 @@ export function InquiryWizard() {
     moveIn: "",
     duration: "",
   });
-  const [prefs, setPrefs] = useState<Prefs>({ sites: [], roomTypes: [] });
+  const [roomTypeIds, setRoomTypeIds] = useState<string[]>([]);
+  const [services, setServices] = useState<string[]>([]);
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Room-type options — a lookup to the custom_roomtype module, fetched once.
+  const [roomTypeOptions, setRoomTypeOptions] = useState<RoomTypeOption[]>([]);
+  const [roomTypesLoading, setRoomTypesLoading] = useState(false);
 
   // Inquiry lifecycle
   const [inquiryId, setInquiryId] = useState<string | null>(null);
@@ -79,12 +86,28 @@ export function InquiryWizard() {
 
   const stepLabels = [t("wiz.step1"), t("wiz.step2"), t("wiz.step3"), t("wiz.step4")];
 
+  // Fetch the room-type lookup options once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    setRoomTypesLoading(true);
+    api
+      .getRoomTypes()
+      .then((rts) => {
+        if (!cancelled) setRoomTypeOptions(rts);
+      })
+      .finally(() => {
+        if (!cancelled) setRoomTypesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Fetch the active template whenever the persona changes.
   useEffect(() => {
     let cancelled = false;
     setTemplateLoading(true);
     setTemplate(null);
-    console.log('persona', persona);
     api
       .getActiveTemplate(persona, 1)
       .then((tpl) => {
@@ -107,6 +130,7 @@ export function InquiryWizard() {
     const e: Record<string, string> = {};
     if (s === 0) {
       if (!contact.fullName.trim()) e.fullName = t("err.required");
+      if (!contact.company.trim()) e.company = t("err.required");
       if (!contact.mobile.trim()) e.mobile = t("err.required");
       if (!contact.email.trim()) e.email = t("err.required");
       else if (!EMAIL_RE.test(contact.email.trim())) e.email = t("err.email");
@@ -149,6 +173,7 @@ export function InquiryWizard() {
         const res = await api.createInquiry({
           persona,
           name: contact.fullName.trim(),
+          company: contact.company.trim(),
           mobile: contact.mobile.trim(),
           email: contact.email.trim(),
         });
@@ -191,10 +216,8 @@ export function InquiryWizard() {
             move_in_date: requirement.moveIn,
             duration_months: Number(requirement.duration) || 0,
           },
-          preferences: {
-            site_preference: prefs.sites,
-            room_type_preference: prefs.roomTypes,
-          },
+          room_type_ids: roomTypeIds,
+          services,
         },
         inquiryCode ?? undefined
       );
@@ -251,13 +274,18 @@ export function InquiryWizard() {
               setReq={setRequirement}
               errors={errors}
               clearError={clearError}
+              lang={lang}
+              roomTypeOptions={roomTypeOptions}
+              roomTypesLoading={roomTypesLoading}
+              roomTypeIds={roomTypeIds}
+              setRoomTypeIds={setRoomTypeIds}
+              services={services}
+              setServices={setServices}
             />
           )}
           {step === 2 && (
-            <StepPreferences
+            <StepQuestions
               lang={lang}
-              prefs={prefs}
-              setPrefs={setPrefs}
               template={template}
               loading={templateLoading}
               answers={answers}
@@ -271,7 +299,9 @@ export function InquiryWizard() {
               persona={persona}
               contact={contact}
               requirement={requirement}
-              prefs={prefs}
+              roomTypeIds={roomTypeIds}
+              roomTypeOptions={roomTypeOptions}
+              services={services}
               template={template}
               answers={answers}
               lang={lang}
@@ -375,17 +405,20 @@ function StepContact({
         </Field>
         <Field
           label={t("f.company")}
-          optionalText={t("common.optional")}
+          required
+          error={errors.company}
           hint={t("f.company.hint")}
           htmlFor="company"
         >
           <Input
             id="company"
             value={contact.company}
-            onChange={(e) =>
-              setContact((c) => ({ ...c, company: e.target.value }))
-            }
+            onChange={(e) => {
+              clearError("company");
+              setContact((c) => ({ ...c, company: e.target.value }));
+            }}
             placeholder={t("f.company.ph")}
+            invalid={!!errors.company}
           />
         </Field>
         <Field label={t("f.mobile")} required error={errors.mobile} htmlFor="mobile">
@@ -430,11 +463,25 @@ function StepRequirement({
   setReq,
   errors,
   clearError,
+  lang,
+  roomTypeOptions,
+  roomTypesLoading,
+  roomTypeIds,
+  setRoomTypeIds,
+  services,
+  setServices,
 }: {
   req: Requirement;
   setReq: (fn: (r: Requirement) => Requirement) => void;
   errors: Record<string, string>;
   clearError: (k: string) => void;
+  lang: "en" | "ar";
+  roomTypeOptions: RoomTypeOption[];
+  roomTypesLoading: boolean;
+  roomTypeIds: string[];
+  setRoomTypeIds: (v: string[]) => void;
+  services: string[];
+  setServices: (v: string[]) => void;
 }) {
   const { t } = useLang();
   return (
@@ -507,6 +554,31 @@ function StepRequirement({
           <span className="text-sm text-muted">{t("f.months")}</span>
         </div>
       </Field>
+
+      <Field label={t("f.roomTypes")} hint={t("f.roomTypes.hint")}>
+        {roomTypesLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t("f.roomTypes.loading")}
+          </div>
+        ) : roomTypeOptions.length === 0 ? (
+          <p className="text-sm text-muted">{t("f.roomTypes.empty")}</p>
+        ) : (
+          <ChipMultiSelect
+            selected={roomTypeIds}
+            onChange={setRoomTypeIds}
+            options={roomTypeOptions.map((rt) => ({ value: rt.id, label: rt.name }))}
+          />
+        )}
+      </Field>
+
+      <Field label={t("f.services")} hint={t("f.services.hint")}>
+        <ChipMultiSelect
+          selected={services}
+          onChange={setServices}
+          options={INQUIRY_SERVICES.map((s) => ({ value: s.value, label: s.label[lang] }))}
+        />
+      </Field>
     </div>
   );
 }
@@ -535,11 +607,9 @@ function SmallNumber({
   );
 }
 
-// ── Step 3: Preferences (FIXED ranked) + Dynamic questions ────────────────────
-function StepPreferences({
+// ── Step 3: Additional questions (template-driven only) ───────────────────────
+function StepQuestions({
   lang,
-  prefs,
-  setPrefs,
   template,
   loading,
   answers,
@@ -548,8 +618,6 @@ function StepPreferences({
   clearError,
 }: {
   lang: "en" | "ar";
-  prefs: Prefs;
-  setPrefs: (fn: (p: Prefs) => Prefs) => void;
   template: Template | null;
   loading: boolean;
   answers: Record<string, AnswerValue>;
@@ -558,60 +626,40 @@ function StepPreferences({
   clearError: (k: string) => void;
 }) {
   const { t } = useLang();
-  return (
-    <div className="space-y-8">
-      {/* Fixed ranked preferences */}
-      <div className="space-y-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-          {t("wiz.prefsHeading")}
-        </h2>
-        <Field label={t("f.sites")} hint={t("f.sitesRanked.hint")}>
-          <RankedListField
-            selected={prefs.sites}
-            onChange={(v) => setPrefs((p) => ({ ...p, sites: v }))}
-            options={SITES.map((s) => ({ value: s.id, label: s.name[lang] }))}
-          />
-        </Field>
-        <Field label={t("f.roomType")} hint={t("f.sitesRanked.hint")}>
-          <RankedListField
-            selected={prefs.roomTypes}
-            onChange={(v) => setPrefs((p) => ({ ...p, roomTypes: v }))}
-            options={ROOM_TYPES.map((r) => ({ value: r.value, label: r.label[lang] }))}
-          />
-        </Field>
-      </div>
+  const questions = template?.questions ?? [];
+  void lang;
 
-      {/* Dynamic questions — shown ONLY when the template actually has some
-          (or while it's still loading). Nothing renders when there are none. */}
-      {(loading || (template?.questions?.length ?? 0) > 0) && (
-        <div className="space-y-6 border-t border-line pt-8">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            {t("wiz.moreQuestions")}
-          </h2>
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              {t("wiz.loadingQuestions")}
-            </div>
-          ) : (
-            template?.questions
-              .slice()
-              .sort((a, b) => a.order - b.order)
-              .map((q) => (
-                <DynamicField
-                  key={q.id}
-                  question={q}
-                  value={answers[q.id]}
-                  error={errors[q.id]}
-                  onChange={(v) => {
-                    clearError(q.id);
-                    setAnswers((a) => ({ ...a, [q.id]: v }));
-                  }}
-                />
-              ))
-          )}
-        </div>
-      )}
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        {t("wiz.loadingQuestions")}
+      </div>
+    );
+  }
+
+  // Template-driven customized fields ONLY. No fixed preferences here anymore.
+  if (questions.length === 0) {
+    return <p className="text-sm text-muted">{t("wiz.noQuestions")}</p>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {questions
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map((q) => (
+          <DynamicField
+            key={q.id}
+            question={q}
+            value={answers[q.id]}
+            error={errors[q.id]}
+            onChange={(v) => {
+              clearError(q.id);
+              setAnswers((a) => ({ ...a, [q.id]: v }));
+            }}
+          />
+        ))}
     </div>
   );
 }
@@ -621,7 +669,9 @@ function StepReview({
   persona,
   contact,
   requirement,
-  prefs,
+  roomTypeIds,
+  roomTypeOptions,
+  services,
   template,
   answers,
   lang,
@@ -630,7 +680,9 @@ function StepReview({
   persona: Persona;
   contact: Contact;
   requirement: Requirement;
-  prefs: Prefs;
+  roomTypeIds: string[];
+  roomTypeOptions: RoomTypeOption[];
+  services: string[];
   template: Template | null;
   answers: Record<string, AnswerValue>;
   lang: "en" | "ar";
@@ -640,11 +692,13 @@ function StepReview({
   const dash = t("rev.notProvided");
   const sep = lang === "ar" ? "، " : ", ";
 
-  const siteNames = prefs.sites
-    .map((id, i) => `${i + 1}. ${SITES.find((s) => s.id === id)?.name[lang] ?? ""}`)
+  const roomNames = roomTypeIds
+    .map((id) => roomTypeOptions.find((rt) => rt.id === id)?.name ?? "")
+    .filter(Boolean)
     .join(sep);
-  const roomNames = prefs.roomTypes
-    .map((v, i) => `${i + 1}. ${ROOM_TYPES.find((r) => r.value === v)?.label[lang] ?? ""}`)
+  const serviceNames = services
+    .map((v) => INQUIRY_SERVICES.find((s) => s.value === v)?.label[lang] ?? "")
+    .filter(Boolean)
     .join(sep);
 
   return (
@@ -673,22 +727,24 @@ function StepReview({
           label={t("f.duration")}
           value={requirement.duration ? `${requirement.duration} ${t("f.months")}` : dash}
         />
+        <Row label={t("f.roomTypes")} value={roomNames || dash} />
+        <Row label={t("f.services")} value={serviceNames || dash} />
       </ReviewSection>
 
-      <ReviewSection title={t("rev.section.preferences")} onEdit={() => goto(2)}>
-        <Row label={t("f.sites")} value={siteNames || dash} />
-        <Row label={t("f.roomType")} value={roomNames || dash} />
-        {template?.questions
-          .slice()
-          .sort((a, b) => a.order - b.order)
-          .map((q) => (
-            <Row
-              key={q.id}
-              label={lang === "ar" ? q.label_ar : q.label_en}
-              value={formatAnswer(q, answers[q.id], dash, t("f.yes"), t("f.no"))}
-            />
-          ))}
-      </ReviewSection>
+      {(template?.questions?.length ?? 0) > 0 && (
+        <ReviewSection title={t("wiz.step3")} onEdit={() => goto(2)}>
+          {template?.questions
+            .slice()
+            .sort((a, b) => a.order - b.order)
+            .map((q) => (
+              <Row
+                key={q.id}
+                label={lang === "ar" ? q.label_ar : q.label_en}
+                value={formatAnswer(q, answers[q.id], dash, t("f.yes"), t("f.no"))}
+              />
+            ))}
+        </ReviewSection>
+      )}
     </div>
   );
 }

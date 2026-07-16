@@ -7,8 +7,10 @@
 
 import {
   MOCK_INQUIRIES,
+  MOCK_ROOM_TYPES,
   inquiriesForEmail,
   generateInquiryCode,
+  roomTypeLabel,
 } from "../mockData";
 import {
   ApiError,
@@ -19,6 +21,7 @@ import {
   type OfferDecision,
   type OfferDecisionResult,
   type Persona,
+  type RoomTypeOption,
   type StatusInquiry,
   type SubmitInquiryResult,
   type Template,
@@ -229,11 +232,14 @@ export const mockApi = {
     return wait(TEMPLATES[persona]);
   },
 
+  getRoomTypes(): Promise<RoomTypeOption[]> {
+    return wait(MOCK_ROOM_TYPES);
+  },
+
   createInquiry(input: CreateInquiryInput): Promise<CreateInquiryResult> {
     return wait({
       inquiry_id: `mock-${Math.floor(Math.random() * 1e6)}`,
       inquiry_code: generateInquiryCode(),
-      // echo persona-derived nothing; keep it minimal
       _persona: input.persona,
     } as CreateInquiryResult);
   },
@@ -379,7 +385,10 @@ function buildDetail(inq: (typeof MOCK_INQUIRIES)[number]): InquiryDetail {
       move_in_date: x.moveIn,
       duration_months: x.duration,
     },
-    preferences: { sites: [inq.siteId], room_types: [inq.roomType] },
+    requirement_extra: {
+      room_types: [roomTypeLabel(inq.roomType)?.label.en ?? inq.roomType],
+      services: ["Catering", "Cleaning"],
+    },
     answers: x.answers,
     offer:
       inq.status === "offer"

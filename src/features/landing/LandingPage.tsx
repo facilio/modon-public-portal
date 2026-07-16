@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Clock,
   CheckCircle2,
-  FileX,
   Building2,
   HeartHandshake,
   ClipboardList,
@@ -63,16 +62,6 @@ function Hero() {
               {t("hero.cta.secondary")}
             </Button>
           </Link>
-        </div>
-
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Chip icon={<Clock className="h-4 w-4" />}>{t("hero.chip.time")}</Chip>
-          <Chip icon={<CheckCircle2 className="h-4 w-4" />}>
-            {t("hero.chip.reply")}
-          </Chip>
-          <Chip icon={<FileX className="h-4 w-4" />}>
-            {t("hero.chip.nodocs")}
-          </Chip>
         </div>
       </div>
     </section>
