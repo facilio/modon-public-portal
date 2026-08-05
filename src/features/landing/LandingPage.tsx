@@ -1,120 +1,142 @@
-import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ArrowRight,
   Clock,
-  CheckCircle2,
+  ListChecks,
   Building2,
   HeartHandshake,
   ClipboardList,
   Search,
   FileText,
   KeyRound,
-  MapPin,
   Upload,
+  Loader2,
+  type LucideIcon,
 } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Chip } from "../../components/ui/Chip";
-import { Input } from "../../components/ui/Input";
-import { SITES, SERVICES } from "../../lib/mockData";
-import { SERVICE_ICONS } from "../../lib/icons";
-import { formatNumber } from "../../lib/format";
+import { serviceIcon } from "../../lib/icons";
+import { api, type ClientTypeOption, type ServiceOption } from "../../lib/api";
 
-export function LandingPage() {
+// Content column — a portal, not a brochure. A touch wider than the wizard so
+// the two-column "what you'll need" grid has room to breathe (per the design).
+function Shell({ children }: { children: React.ReactNode }) {
+  return <div className="mx-auto w-full max-w-5xl px-5 sm:px-6">{children}</div>;
+}
+
+function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <>
-      <Hero />
-      <PersonaSection />
-      <HowItWorks />
-      <Locations />
-      <Included />
-      <RequirementsCallout />
-      <TrackWidget />
-    </>
+    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+      {children}
+    </p>
   );
 }
 
-// ── Hero ─────────────────────────────────────────────────────────────────────
+export function LandingPage() {
+  return (
+    <div>
+      <Hero />
+      <div className="space-y-14 py-12">
+        {/* Track-your-inquiry card removed for now — the tracking flow isn't set
+            up clearly yet. The StatusTracker page + API logic remain in place. */}
+        <HowItWorks />
+        <Included />
+        <StartBar />
+      </div>
+    </div>
+  );
+}
+
+// ── Hero (full-bleed banner with the "get ready" badges) ─────────────────────
 function Hero() {
   const { t } = useLang();
+  const [types, setTypes] = useState<ClientTypeOption[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getClientTypes()
+      .then((r) => !cancelled && setTypes(r))
+      .catch(() => !cancelled && setTypes([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <section className="border-b border-line bg-white">
-      <div className="container-page py-16 lg:py-20">
-        <p className="text-sm font-semibold uppercase tracking-wide text-primary">
-          {t("hero.eyebrow")}
-        </p>
-        <h1 className="mt-3 max-w-3xl text-4xl font-extrabold leading-[1.1] text-ink lg:text-5xl">
-          {t("hero.title")}
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg text-muted">{t("hero.subtitle")}</p>
+      <Shell>
+        <div className="py-12">
+          <Eyebrow>{t("hero.eyebrow")}</Eyebrow>
+          <h1 className="mt-3 max-w-3xl text-3xl font-extrabold leading-tight text-ink sm:text-4xl">
+            {t("hero.title")}
+          </h1>
+          <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-muted">
+            {t("hero.subtitle")}
+          </p>
 
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Link to="/inquiry">
-            <Button size="lg">
-              {t("hero.cta.primary")}
-              <ArrowRight className="h-4 w-4 rtl:rotate-180" />
-            </Button>
-          </Link>
-          <Link to="/status">
-            <Button size="lg" variant="secondary">
-              {t("hero.cta.secondary")}
-            </Button>
-          </Link>
+          {/* "Get these ready" badges. */}
+          <div className="mt-7 flex flex-wrap gap-2.5">
+            <Chip icon={<Clock className="h-4 w-4" />}>{t("before.pill.time")}</Chip>
+            <Chip icon={<ListChecks className="h-4 w-4" />}>
+              {t("before.pill.steps")}
+            </Chip>
+            <Chip icon={<Upload className="h-4 w-4" />}>
+              {t("before.pill.nouploads")}
+            </Chip>
+          </div>
+
+          {/* Who this is for — derived from the client-type enum (not hardcoded). */}
+          {types.length > 0 && (
+            <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap">
+              {types.map((ct) => {
+                const Icon = clientTypeIcon(ct.name);
+                const descKey = clientTypeDescKey(ct.name);
+                return (
+                  <span
+                    key={ct.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-line bg-canvas px-4 py-2 text-sm"
+                  >
+                    <Icon className="h-4 w-4 text-primary" />
+                    <span className="font-semibold text-ink">{ct.name}</span>
+                    {descKey && <span className="text-muted">· {t(descKey)}</span>}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </div>
+      </Shell>
     </section>
   );
 }
 
-// ── Persona cards ─────────────────────────────────────────────────────────────
-function PersonaSection() {
-  const { t } = useLang();
-  const personas = [
-    {
-      icon: Building2,
-      tint: "bg-tint-blue text-primary",
-      title: t("persona.company.title"),
-      desc: t("persona.company.desc"),
-      persona: "Corporate",
-    },
-    {
-      icon: HeartHandshake,
-      tint: "bg-tint-purple text-violet-600",
-      title: t("persona.agency.title"),
-      desc: t("persona.agency.desc"),
-      persona: "Sponsor",
-    },
-  ];
-
-  return (
-    <Section title={t("persona.heading")} sub={t("persona.sub")}>
-      <div className="grid gap-5 md:grid-cols-2">
-        {personas.map((p) => (
-          <Card key={p.title} hover className="flex flex-col p-6">
-            <span
-              className={`flex h-12 w-12 items-center justify-center rounded-xl ${p.tint}`}
-            >
-              <p.icon className="h-6 w-6" />
-            </span>
-            <h3 className="mt-4 text-lg font-bold text-ink">{p.title}</h3>
-            <p className="mt-2 flex-1 text-sm text-muted">{p.desc}</p>
-            <Link
-              to={`/inquiry?persona=${p.persona}`}
-              className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:gap-2.5"
-            >
-              {t("persona.cta")}
-              <ArrowRight className="h-4 w-4 rtl:rotate-180" />
-            </Link>
-          </Card>
-        ))}
-      </div>
-    </Section>
-  );
+function clientTypeIcon(name: string): LucideIcon {
+  const n = name.toLowerCase();
+  if (/agenc|sponsor|ngo/.test(n)) return HeartHandshake;
+  return Building2;
+}
+function clientTypeDescKey(
+  name: string
+): "who.company.desc" | "who.agency.desc" | null {
+  const n = name.toLowerCase();
+  if (/compan|corporate/.test(n)) return "who.company.desc";
+  if (/agenc|sponsor|ngo/.test(n)) return "who.agency.desc";
+  return null;
 }
 
-// ── How it works ───────────────────────────────────────────────────────────────
+// Soft icon-tile colours for the "how it works" cards (per the design).
+const stepTints = [
+  { bg: "bg-tint-blue", fg: "text-blue-600" },
+  { bg: "bg-tint-purple", fg: "text-violet-600" },
+  { bg: "bg-tint-amber", fg: "text-amber-600" },
+  { bg: "bg-tint-green", fg: "text-emerald-600" },
+];
+
+// ── How it works (the "what you'll need to know" card grid) ──────────────────
 function HowItWorks() {
   const { t } = useLang();
   const steps = [
@@ -124,161 +146,107 @@ function HowItWorks() {
     { icon: KeyRound, title: t("how.step4.title"), desc: t("how.step4.desc") },
   ];
   return (
-    <Section title={t("how.heading")} muted>
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {steps.map((s, i) => (
-          <Card key={s.title} className="relative p-6">
-            <span className="absolute end-5 top-5 text-3xl font-extrabold text-line">
-              {i + 1}
-            </span>
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-soft text-primary">
-              <s.icon className="h-5 w-5" />
-            </span>
-            <h3 className="mt-4 text-base font-bold text-ink">{s.title}</h3>
-            <p className="mt-1.5 text-sm text-muted">{s.desc}</p>
-          </Card>
-        ))}
-      </div>
-    </Section>
-  );
-}
+    <Shell>
+      <Eyebrow>{t("how.eyebrow")}</Eyebrow>
+      <h2 className="mt-2 text-[22px] font-bold text-ink">{t("how.heading")}</h2>
 
-// ── Locations ──────────────────────────────────────────────────────────────────
-function Locations() {
-  const { t, lang } = useLang();
-  return (
-    <Section title={t("loc.heading")} sub={t("loc.sub")}>
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {SITES.map((site) => (
-          <Card key={site.id} hover className="overflow-hidden">
-            <div className={`h-32 bg-gradient-to-br ${site.gradient}`} />
-            <div className="p-5">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-muted">
-                <MapPin className="h-3.5 w-3.5" />
-                {site.emirate[lang]}
-              </div>
-              <h3 className="mt-1.5 text-base font-bold text-ink">
-                {site.name[lang]}
-              </h3>
-              <p className="mt-1 text-xs text-muted">
-                {formatNumber(site.capacity, lang)} {t("loc.capacity")}
-              </p>
-              <p className="mt-3 text-sm text-ink-soft">
-                <span className="text-muted">{t("loc.from")} </span>
-                <span className="text-lg font-bold text-ink">
-                  AED {formatNumber(site.fromRate, lang)}
-                </span>
-                <span className="text-muted"> {t("loc.perMonth")}</span>
-              </p>
-            </div>
-          </Card>
-        ))}
-      </div>
-    </Section>
-  );
-}
-
-// ── What's included ─────────────────────────────────────────────────────────────
-function Included() {
-  const { t } = useLang();
-  return (
-    <Section title={t("incl.heading")} sub={t("incl.sub")} muted>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {SERVICES.map((s) => {
-          const Icon = SERVICE_ICONS[s.icon];
+      <div className="mt-6 grid gap-5 md:grid-cols-2">
+        {steps.map((s, i) => {
+          const tint = stepTints[i % stepTints.length];
           return (
-            <Card key={s.value} className="flex flex-col items-center p-6 text-center">
-              <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-soft text-primary">
-                <Icon className="h-6 w-6" />
+            <Card key={s.title} className="flex gap-4 p-6" hover>
+              <span
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tint.bg} ${tint.fg}`}
+              >
+                <s.icon className="h-5 w-5" />
               </span>
-              <span className="mt-3 text-sm font-semibold text-ink">
-                {t(s.key)}
-              </span>
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-bold text-muted">{i + 1}</span>
+                  <h3 className="text-base font-bold text-ink">{s.title}</h3>
+                </div>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted">{s.desc}</p>
+              </div>
             </Card>
           );
         })}
       </div>
-    </Section>
-  );
-}
 
-// ── Requirements callout ─────────────────────────────────────────────────────────
-function RequirementsCallout() {
-  const { t } = useLang();
-  return (
-    <div className="container-page py-6">
-      <Card className="grid gap-6 border-primary/20 bg-primary-soft/60 p-8 md:grid-cols-[1fr_auto] md:items-center">
-        <div>
-          <h3 className="text-xl font-bold text-ink">{t("req.title")}</h3>
-          <p className="mt-2 max-w-2xl text-sm text-muted">{t("req.desc")}</p>
-        </div>
-        <div className="flex flex-wrap gap-2.5">
-          <Chip icon={<Clock className="h-4 w-4" />}>{t("req.chip.time")}</Chip>
-          <Chip icon={<CheckCircle2 className="h-4 w-4" />}>
-            {t("req.chip.steps")}
-          </Chip>
-          <Chip icon={<Upload className="h-4 w-4" />}>{t("req.chip.nodocs")}</Chip>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// ── Track widget ─────────────────────────────────────────────────────────────────
-function TrackWidget() {
-  const { t } = useLang();
-  const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    navigate(`/status${email ? `?email=${encodeURIComponent(email)}` : ""}`);
-  }
-
-  return (
-    <div className="container-page py-6">
-      <Card className="p-8">
-        <h3 className="text-xl font-bold text-ink">{t("track.title")}</h3>
-        <p className="mt-1.5 text-sm text-muted">{t("track.sub")}</p>
-        <form
-          onSubmit={handleSubmit}
-          className="mt-5 flex flex-col gap-3 sm:flex-row"
-        >
-          <Input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder={t("track.placeholder")}
-            className="sm:max-w-md"
-          />
-          <Button type="submit" size="lg" className="shrink-0">
-            {t("track.cta")}
-          </Button>
-        </form>
-      </Card>
-    </div>
-  );
-}
-
-// ── Section wrapper ──────────────────────────────────────────────────────────────
-function Section({
-  title,
-  sub,
-  muted,
-  children,
-}: {
-  title: string;
-  sub?: string;
-  muted?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className={muted ? "bg-canvas" : "bg-white"}>
-      <div className="container-page py-14">
-        <h2 className="text-2xl font-bold text-ink lg:text-3xl">{title}</h2>
-        {sub && <p className="mt-2 text-muted">{sub}</p>}
-        <div className="mt-8">{children}</div>
+      {/* "Before you start" as a note box, echoing the design's helper callouts. */}
+      <div className="mt-5 rounded-xl bg-primary-soft px-5 py-4">
+        <p className="text-sm font-semibold text-ink">{t("before.heading")}</p>
+        <p className="mt-1 text-sm leading-relaxed text-muted">{t("before.desc")}</p>
       </div>
-    </section>
+    </Shell>
+  );
+}
+
+// ── What's included (services from Facilio) ──────────────────────────────────
+function Included() {
+  const { t } = useLang();
+  const [services, setServices] = useState<ServiceOption[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getServices()
+      .then((s) => !cancelled && setServices(s))
+      .catch(() => !cancelled && setServices([]))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!loading && services.length === 0) return null;
+
+  return (
+    <Shell>
+      <Eyebrow>{t("incl.eyebrow")}</Eyebrow>
+      <h2 className="mt-2 text-[22px] font-bold text-ink">{t("incl.heading")}</h2>
+      <p className="mt-1 text-sm text-muted">{t("incl.sub")}</p>
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-muted">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+      ) : (
+        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {services.map((s) => {
+            const Icon = serviceIcon(s.name);
+            return (
+              <Card key={s.id} className="flex flex-col items-center p-6 text-center" hover>
+                <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                  <Icon className="h-6 w-6" />
+                </span>
+                <span className="mt-3 text-sm font-semibold text-ink">{s.name}</span>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </Shell>
+  );
+}
+
+// ── Start inquiry (bottom CTA bar) ───────────────────────────────────────────
+function StartBar() {
+  const { t } = useLang();
+  return (
+    <Shell>
+      <Card className="flex flex-col gap-5 p-6 shadow-lg sm:flex-row sm:items-center sm:justify-between sm:p-8">
+        <div>
+          <Eyebrow>{t("start.eyebrow")}</Eyebrow>
+          <h2 className="mt-2 text-2xl font-bold text-ink">{t("start.title")}</h2>
+          <p className="mt-2 max-w-xl text-sm text-muted">{t("start.sub")}</p>
+        </div>
+        <Link to="/inquiry" className="shrink-0">
+          <Button size="lg">
+            {t("start.cta")}
+            <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+          </Button>
+        </Link>
+      </Card>
+    </Shell>
   );
 }

@@ -6,7 +6,7 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const inputClass =
-  "h-11 w-full rounded-lg border bg-white px-3.5 text-[15px] text-ink placeholder:text-muted/70 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary";
+  "h-11 w-full rounded-lg border bg-white px-3.5 text-[15px] text-ink placeholder:text-muted/70 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary disabled:cursor-not-allowed disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   { className, invalid, onWheel, ...rest },

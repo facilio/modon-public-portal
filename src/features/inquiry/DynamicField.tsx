@@ -1,7 +1,8 @@
 import { useLang } from "../../i18n/LanguageContext";
 import { Field } from "../../components/ui/Field";
 import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
+import { Dropdown } from "../../components/ui/Dropdown";
+import { DatePicker } from "../../components/ui/DatePicker";
 import { cn } from "../../lib/cn";
 import type { Question } from "../../lib/api/types";
 
@@ -68,30 +69,23 @@ export function DynamicField({
 
       case "date":
         return (
-          <Input
+          <DatePicker
             id={question.id}
-            type="date"
             value={(value as string) ?? ""}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(v) => onChange(v)}
             invalid={!!error}
           />
         );
 
       case "dropdown":
         return (
-          <Select
+          <Dropdown
             id={question.id}
             value={(value as string) ?? ""}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(v) => onChange(v)}
+            options={question.options.map((opt) => ({ value: opt, label: opt }))}
             invalid={!!error}
-          >
-            <option value="">—</option>
-            {question.options.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </Select>
+          />
         );
 
       case "multiselect": {

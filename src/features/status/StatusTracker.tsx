@@ -10,7 +10,7 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ProgressStepper } from "../../components/ui/ProgressStepper";
 import { InquiryDetailView } from "./InquiryDetail";
 import { siteById, roomTypeLabel } from "../../lib/mockData";
-import { api, type StatusInquiry, type PublicStatus } from "../../lib/api";
+import { api, type StatusInquiry } from "../../lib/api";
 import { formatDate, formatNumber } from "../../lib/format";
 import { cn } from "../../lib/cn";
 
@@ -53,12 +53,6 @@ export function StatusTracker() {
     }
   }
 
-  function handleStatusChange(changedCode: string, status: PublicStatus) {
-    setInquiries((list) =>
-      list.map((i) => (i.code === changedCode ? { ...i, status } : i))
-    );
-  }
-
   return (
     <div className="container-page max-w-3xl py-12">
       {phase === "auth" && (
@@ -95,7 +89,6 @@ export function StatusTracker() {
           <InquiryDetailView
             code={selectedCode}
             onBack={() => setSelectedCode(null)}
-            onStatusChange={handleStatusChange}
           />
         ) : (
           <InquiryList

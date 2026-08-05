@@ -10,19 +10,38 @@ import {
   type CreateInquiryInput,
   type CreateInquiryResult,
   type InquiryDetail,
+  type InquiryEditData,
   type OfferDecision,
   type OfferDecisionResult,
-  type Persona,
+  type ClientTypeOption,
+  type ClusterOption,
+  type InquiryService,
   type RoomTypeOption,
+  type ServiceOption,
   type StatusInquiry,
   type SubmitInquiryInput,
   type SubmitInquiryResult,
   type Template,
+  type UploadResult,
 } from "./types";
 
 const BASE = (import.meta.env.VITE_BFF_BASE_URL as string | undefined)?.trim();
 console.log('base', BASE);
 export const isBackendConfigured = Boolean(BASE);
+
+/** Read a File as a bare base64 string (no data: prefix) for the upload proxy. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result ?? "");
+      const comma = res.indexOf(",");
+      resolve(comma >= 0 ? res.slice(comma + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   console.log(`${BASE}${path}`);
@@ -41,11 +60,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // GET /templates/active?persona=&layer=1
-  getActiveTemplate(persona: Persona, layer = 1): Promise<Template> {
-    if (!isBackendConfigured) return mockApi.getActiveTemplate(persona);
+  // GET /templates/active?clientType=<enum index> → active questionnaire template
+  getActiveTemplate(clientType: string): Promise<Template> {
+    if (!isBackendConfigured) return mockApi.getActiveTemplate(clientType);
     return request<Template>(
-      `/templates/active?persona=${encodeURIComponent(persona)}&layer=${layer}`
+      `/templates/active?clientType=${encodeURIComponent(clientType)}`
     );
   },
 
@@ -53,6 +72,47 @@ export const api = {
   getRoomTypes(): Promise<RoomTypeOption[]> {
     if (!isBackendConfigured) return mockApi.getRoomTypes();
     return request<RoomTypeOption[]>("/room-types");
+  },
+
+  // GET /services → the custom_services_1 master catalog (landing page)
+  getServices(): Promise<ServiceOption[]> {
+    if (!isBackendConfigured) return mockApi.getServices();
+    return request<ServiceOption[]>("/services");
+  },
+
+  // GET /inquiry-services → structured services (catalog × active rate cards)
+  // for the Requirement step, mirroring the console form.
+  getInquiryServices(): Promise<InquiryService[]> {
+    if (!isBackendConfigured) return mockApi.getInquiryServices();
+    return request<InquiryService[]>("/inquiry-services");
+  },
+
+  // GET /clusters → first 4 clusters + building counts (landing page)
+  getClusters(): Promise<ClusterOption[]> {
+    if (!isBackendConfigured) return mockApi.getClusters();
+    return request<ClusterOption[]>("/clusters");
+  },
+
+  // GET /client-types → the client.clienttype_client enum options ("who is this for")
+  getClientTypes(): Promise<ClientTypeOption[]> {
+    if (!isBackendConfigured) return mockApi.getClientTypes();
+    return request<ClientTypeOption[]>("/client-types");
+  },
+
+  // POST /uploads → upload a document, returns its Facilio file id. The browser
+  // sends the file base64-encoded (the gateway forwards it to Facilio as
+  // multipart). Mock mode returns a fake id so the flow is exercisable offline.
+  async uploadFile(file: File): Promise<UploadResult> {
+    if (!isBackendConfigured) return mockApi.uploadFile(file);
+    const dataBase64 = await fileToBase64(file);
+    return request<UploadResult>("/uploads", {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        contentType: file.type || "application/octet-stream",
+        dataBase64,
+      }),
+    });
   },
 
   // POST /inquiries  → creates Inquiry (NEW + Draft)
@@ -109,6 +169,14 @@ export const api = {
   getInquiryDetail(code: string): Promise<InquiryDetail> {
     if (!isBackendConfigured) return mockApi.getInquiryDetail(code);
     return request<InquiryDetail>(`/inquiries/${encodeURIComponent(code)}`);
+  },
+
+  // GET /inquiries/{code}/edit → full editable payload for the edit-via-link flow
+  getInquiryForEdit(code: string): Promise<InquiryEditData> {
+    if (!isBackendConfigured) return mockApi.getInquiryForEdit(code);
+    return request<InquiryEditData>(
+      `/inquiries/${encodeURIComponent(code)}/edit`
+    );
   },
 
   // POST /inquiries/{code}/respond → approve/reject the offer (Offer Sent)

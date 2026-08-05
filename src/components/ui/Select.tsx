@@ -5,14 +5,16 @@ import { inputClass } from "./Input";
 
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   invalid?: boolean;
+  /** Extra classes for the positioning wrapper (e.g. `flex-1` inside a row). */
+  wrapperClassName?: string;
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { className, invalid, children, ...rest },
+  { className, invalid, wrapperClassName, children, ...rest },
   ref
 ) {
   return (
-    <div className="relative">
+    <div className={cn("relative", wrapperClassName)}>
       <select
         ref={ref}
         className={cn(

@@ -18,12 +18,18 @@ import {
   type CreateInquiryInput,
   type CreateInquiryResult,
   type InquiryDetail,
+  type InquiryEditData,
   type OfferDecision,
   type OfferDecisionResult,
+  type ClientTypeOption,
+  type ClusterOption,
+  type InquiryService,
   type Persona,
   type RoomTypeOption,
+  type ServiceOption,
   type StatusInquiry,
   type SubmitInquiryResult,
+  type UploadResult,
   type Template,
 } from "./types";
 
@@ -228,12 +234,80 @@ const TEMPLATES: Record<Persona, Template> = {
 const DEMO_OTP = "123456";
 
 export const mockApi = {
-  getActiveTemplate(persona: Persona): Promise<Template> {
+  getActiveTemplate(clientType: string): Promise<Template> {
+    // client-type enum index → persona-keyed mock templates (1=Company→Corporate).
+    const persona: Persona = clientType === "2" ? "Sponsor" : "Corporate";
     return wait(TEMPLATES[persona]);
   },
 
   getRoomTypes(): Promise<RoomTypeOption[]> {
-    return wait(MOCK_ROOM_TYPES);
+    // Add mock occupancy so the matrix shows an "N in 1" label offline.
+    const bedsByName: Record<string, number> = {
+      Studio: 1, "1BHK": 2, "2BHK": 4, "Shared-2": 2, "Shared-4": 4, "Shared-6": 6,
+    };
+    return wait(
+      MOCK_ROOM_TYPES.map((rt) => {
+        const beds = bedsByName[rt.name] ?? null;
+        return { id: rt.id, name: rt.name, bedsPerRoom: beds, occupancy: beds ? `${beds} in 1` : "" };
+      })
+    );
+  },
+
+  getServices(): Promise<ServiceOption[]> {
+    return wait([
+      { id: "svc-1", name: "Cleaning" },
+      { id: "svc-2", name: "Catering" },
+      { id: "svc-3", name: "Laundry" },
+      { id: "svc-4", name: "Mess Hall" },
+      { id: "svc-5", name: "Food parcel" },
+      { id: "svc-6", name: "Wifi" },
+      { id: "svc-7", name: "Access Card Provision" },
+    ]);
+  },
+
+  // Structured services (catalog × rate cards), mirroring the console form.
+  // Some services carry rate-card count rows; others are boolean toggles.
+  getInquiryServices(): Promise<InquiryService[]> {
+    return wait([
+      {
+        serviceId: "svc-catering", serviceName: "Catering", group: 2,
+        rateCards: [
+          { id: "rc-cat-veg", name: "Catering Basic-7" },
+          { id: "rc-cat-non", name: "Catering Junior-10" },
+        ],
+      },
+      { serviceId: "svc-cleaning", serviceName: "Cleaning", group: 2, rateCards: [] },
+      {
+        serviceId: "svc-laundry", serviceName: "Laundry", group: 3,
+        rateCards: [
+          { id: "rc-lnd-wf", name: "Wash + Fold" },
+          { id: "rc-lnd-wfi", name: "Wash + Fold + Iron" },
+        ],
+      },
+      { serviceId: "svc-wifi", serviceName: "Wifi", group: 3, rateCards: [] },
+    ]);
+  },
+
+  // Fake upload — returns a stable-ish id so the offline flow is exercisable.
+  uploadFile(file: File): Promise<UploadResult> {
+    void file;
+    return wait({ fileId: Math.floor(Math.random() * 1e6) });
+  },
+
+  getClusters(): Promise<ClusterOption[]> {
+    return wait([
+      { id: "cl-1", name: "Cluster A", buildingCount: 6 },
+      { id: "cl-2", name: "Cluster B", buildingCount: 4 },
+      { id: "cl-3", name: "Cluster C", buildingCount: 8 },
+      { id: "cl-4", name: "Cluster D", buildingCount: 3 },
+    ]);
+  },
+
+  getClientTypes(): Promise<ClientTypeOption[]> {
+    return wait([
+      { id: "1", name: "Company" },
+      { id: "2", name: "Agency" },
+    ]);
   },
 
   createInquiry(input: CreateInquiryInput): Promise<CreateInquiryResult> {
@@ -287,6 +361,52 @@ export const mockApi = {
     );
     if (!inq) throw new ApiError("generic");
     return buildDetail(inq);
+  },
+
+  // ── Edit-via-link (admin-created inquiry, opened by the client) ─────────────
+  // Demo: a code containing "LOCKED" simulates a non-draft inquiry (the client
+  // sees the "contact MODON" screen); anything else is an editable draft.
+  async getInquiryForEdit(code: string): Promise<InquiryEditData> {
+    await wait(null);
+    const locked = code.toUpperCase().includes("LOCKED");
+    return {
+      inquiry_id: "mock-edit-1",
+      inquiry_code: code || generateInquiryCode(),
+      editable: !locked,
+      status: locked ? "review" : "received",
+      clientTypeId: "1",
+      contact: {
+        fullName: "Sara Al Mansoori",
+        company: "Apex Facilities LLC",
+        mobile: "+971 50 123 4567",
+        email: "sara@apex.example",
+      },
+      trade_license_number: "CN-1234567",
+      requirement: { moveIn: "2026-09-01", moveOut: "2027-09-01", duration: "12" },
+      accommodation: [
+        { kind: "ROOM_TYPE", roomTypeId: "rt-shared-4", roomType: "Shared-4", description: "", bedspaces: 40 },
+        { kind: "ROOM_TYPE", roomTypeId: "rt-studio", roomType: "Studio", description: "", bedspaces: 5 },
+        { kind: "CUSTOM", roomTypeId: "", roomType: "Customized", description: "2 accessible rooms", bedspaces: 2 },
+      ],
+      services: [
+        {
+          serviceId: "svc-catering", serviceName: "Catering", enabled: true,
+          lines: [
+            { kind: "RATE_CARD", rateCardEntryId: "rc-cat-veg", rateCardName: "Catering Basic-7", description: "", quantity: 30 },
+            { kind: "CUSTOM", rateCardEntryId: "", rateCardName: "", description: "Halal-only kitchen", quantity: 5 },
+          ],
+        },
+        { serviceId: "svc-cleaning", serviceName: "Cleaning", enabled: true, lines: [] },
+      ],
+      vat_certificate: { fileId: 9001, name: "vat-certificate.pdf" },
+      trade_license: null,
+      template_id: "tpl-corporate-l1",
+      answers: {
+        q_trade_license: "TL-88421",
+        q_budget: "AED 800–1,200",
+        q_urgency: "Within 30 days",
+      },
+    };
   },
 
   // ── Approve / reject the offer (Offer Sent) ────────────────────────────────
@@ -381,12 +501,13 @@ function buildDetail(inq: (typeof MOCK_INQUIRIES)[number]): InquiryDetail {
     },
     requirement: {
       requested_beds: inq.beds,
-      gender_mix: { male: x.gender[0], female: x.gender[1] },
       move_in_date: x.moveIn,
       duration_months: x.duration,
     },
     requirement_extra: {
-      room_types: [roomTypeLabel(inq.roomType)?.label.en ?? inq.roomType],
+      room_lines: [
+        { roomType: roomTypeLabel(inq.roomType)?.label.en ?? inq.roomType, beds: inq.beds },
+      ],
       services: ["Catering", "Cleaning"],
     },
     answers: x.answers,

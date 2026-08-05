@@ -1,24 +1,11 @@
 import { useEffect, useState } from "react";
-import {
-  ArrowLeft,
-  CheckCircle2,
-  XCircle,
-  FileText,
-  Loader2,
-  Mail,
-} from "lucide-react";
+import { ArrowLeft, FileText, Loader2, Mail } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
 import { Card } from "../../components/ui/Card";
-import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ProgressStepper } from "../../components/ui/ProgressStepper";
 import { formatDate, formatNumber } from "../../lib/format";
-import {
-  api,
-  type InquiryDetail as Detail,
-  type Persona,
-  type PublicStatus,
-} from "../../lib/api";
+import { api, type InquiryDetail as Detail, type Persona } from "../../lib/api";
 
 const personaKey: Record<Persona, "f.persona.company" | "f.persona.agency" | "f.persona.individual"> = {
   Corporate: "f.persona.company",
@@ -29,18 +16,14 @@ const personaKey: Record<Persona, "f.persona.company" | "f.persona.agency" | "f.
 export function InquiryDetailView({
   code,
   onBack,
-  onStatusChange,
 }: {
   code: string;
   onBack: () => void;
-  onStatusChange: (code: string, status: PublicStatus) => void;
 }) {
   const { t, lang } = useLang();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [decided, setDecided] = useState<"approve" | "reject" | null>(null);
-
 
   useEffect(() => {
     let cancelled = false;
@@ -48,24 +31,13 @@ export function InquiryDetailView({
     setError(false);
     api
       .getInquiryDetail(code)
-      .then((d) => {
-        if(!cancelled){
-          console.log(d);
-          setDetail(d);
-        }
-      })
+      .then((d) => !cancelled && setDetail(d))
       .catch(() => !cancelled && setError(true))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
   }, [code]);
-
-  function handleDecision(decision: "approve" | "reject", status: PublicStatus) {
-    setDetail((d) => (d ? { ...d, status } : d));
-    setDecided(decision);
-    onStatusChange(code, status);
-  }
 
   return (
     <div>
@@ -110,12 +82,8 @@ export function InquiryDetailView({
             <ProgressStepper status={detail.status} />
           </Card>
 
-          {/* Offer band while the offer is out; confirmation once a decision is made */}
-          {decided ? (
-            <DecisionBanner decision={decided} />
-          ) : detail.status === "offer" ? (
-            <OfferBand code={detail.code} offer={detail.offer} onDecision={handleDecision} />
-          ) : null}
+          {/* Offer notice — proposal is sent by email; the team decides manually */}
+          {detail.status === "offer" && <OfferNotice offer={detail.offer} />}
 
           {/* Read-only inquiry summary */}
           <ReadonlySection title={t("rev.section.contact")}>
@@ -130,19 +98,19 @@ export function InquiryDetailView({
           </ReadonlySection>
 
           <ReadonlySection title={t("rev.section.requirement")}>
-            <Row label={t("f.beds")} value={formatNumber(detail.requirement.requested_beds, lang)} />
             <Row
-              label={t("f.genderMix")}
-              value={`${t("f.male")}: ${detail.requirement.gender_mix.male} · ${t("f.female")}: ${detail.requirement.gender_mix.female}`}
+              label={t("f.roomTypes")}
+              value={
+                detail.requirement_extra.room_lines
+                  .map((l) => `${l.roomType} · ${formatNumber(l.beds, lang)}`)
+                  .join(", ") || t("rev.notProvided")
+              }
             />
+            <Row label={t("f.beds")} value={formatNumber(detail.requirement.requested_beds, lang)} />
             <Row label={t("f.moveIn")} value={formatDate(detail.requirement.move_in_date, lang)} />
             <Row
               label={t("f.duration")}
               value={`${detail.requirement.duration_months} ${t("f.months")}`}
-            />
-            <Row
-              label={t("f.roomTypes")}
-              value={detail.requirement_extra.room_types.join(", ") || t("rev.notProvided")}
             />
             <Row
               label={t("f.services")}
@@ -163,55 +131,11 @@ export function InquiryDetailView({
   );
 }
 
-// ── Confirmation banner after a decision ────────────────────────────────────────
-function DecisionBanner({ decision }: { decision: "approve" | "reject" }) {
-  const { t } = useLang();
-  const approved = decision === "approve";
-  return (
-    <Card
-      className={
-        approved
-          ? "border-emerald-200 bg-tint-green p-6"
-          : "border-slate-200 bg-canvas p-6"
-      }
-    >
-      <div className="flex items-center gap-2">
-        {approved ? (
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-        ) : (
-          <XCircle className="h-5 w-5 text-slate-500" />
-        )}
-        <p className="text-sm font-medium text-ink">
-          {approved ? t("st.offer.approved") : t("st.offer.rejected")}
-        </p>
-      </div>
-    </Card>
-  );
-}
-
-// ── Offer band: Approve / Reject ────────────────────────────────────────────────
-function OfferBand({
-  code,
-  offer,
-  onDecision,
-}: {
-  code: string;
-  offer?: Detail["offer"];
-  onDecision: (decision: "approve" | "reject", status: PublicStatus) => void;
-}) {
+// ── Offer notice (info only) ─────────────────────────────────────────────────
+// The proposal is emailed to the applicant; they reply by email and MODON staff
+// mark it approved/rejected manually. No decision buttons on the portal.
+function OfferNotice({ offer }: { offer?: Detail["offer"] }) {
   const { t, lang } = useLang();
-  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
-
-  async function respond(decision: "approve" | "reject") {
-    setBusy(decision);
-    try {
-      const res = await api.respondOffer(code, decision);
-      onDecision(decision, res.status);
-    } catch {
-      setBusy(null); // keep buttons enabled on failure
-    }
-  }
-
   return (
     <Card className="border-primary/20 bg-primary-soft/60 p-6">
       <div className="flex items-start gap-3">
@@ -251,30 +175,6 @@ function OfferBand({
               )}
             </div>
           )}
-
-          <div className="mt-4 flex flex-wrap gap-3">
-            <Button onClick={() => respond("approve")} disabled={busy !== null}>
-              {busy === "approve" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-4 w-4" />
-              )}
-              {t("st.offer.approve")}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => respond("reject")}
-              disabled={busy !== null}
-              className="hover:border-red-300 hover:text-red-600"
-            >
-              {busy === "reject" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <XCircle className="h-4 w-4" />
-              )}
-              {t("st.offer.reject")}
-            </Button>
-          </div>
         </div>
       </div>
     </Card>

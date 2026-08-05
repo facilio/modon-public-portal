@@ -1,11 +1,19 @@
 import { Link } from "react-router-dom";
-import { CheckCircle2, Copy, Search, Home } from "lucide-react";
+import { CheckCircle2, Copy, Home } from "lucide-react";
 import { useState } from "react";
 import { useLang } from "../../i18n/LanguageContext";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 
-export function SuccessScreen({ code, email }: { code: string; email: string }) {
+export function SuccessScreen({
+  code,
+  email,
+  isEdit = false,
+}: {
+  code: string;
+  email: string;
+  isEdit?: boolean;
+}) {
   const { t } = useLang();
   const [copied, setCopied] = useState(false);
 
@@ -22,8 +30,10 @@ export function SuccessScreen({ code, email }: { code: string; email: string }) 
         <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-tint-green text-emerald-600">
           <CheckCircle2 className="h-8 w-8" />
         </span>
-        <h1 className="mt-5 text-2xl font-bold text-ink">{t("ok.title")}</h1>
-        <p className="mt-2 text-muted">{t("ok.sub")}</p>
+        <h1 className="mt-5 text-2xl font-bold text-ink">
+          {t(isEdit ? "ok.edit.title" : "ok.title")}
+        </h1>
+        <p className="mt-2 text-muted">{t(isEdit ? "ok.edit.sub" : "ok.sub")}</p>
 
         {/* Code */}
         <div className="mt-7 rounded-xl border border-dashed border-primary/40 bg-primary-soft/60 p-6">
@@ -60,13 +70,8 @@ export function SuccessScreen({ code, email }: { code: string; email: string }) 
           </ul>
         </div>
 
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Link to={`/status?email=${encodeURIComponent(email)}`}>
-            <Button size="lg" className="w-full sm:w-auto">
-              <Search className="h-4 w-4" />
-              {t("ok.track")}
-            </Button>
-          </Link>
+        <div className="mt-7 flex justify-center">
+          {/* Track button removed for now (tracking flow not set up clearly). */}
           <Link to="/">
             <Button size="lg" variant="secondary" className="w-full sm:w-auto">
               <Home className="h-4 w-4" />
