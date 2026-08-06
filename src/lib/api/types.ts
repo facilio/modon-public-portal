@@ -144,6 +144,17 @@ export interface UploadResult {
   fileId: number | null;
 }
 
+/** Attach already-uploaded document file ids to an existing (draft) inquiry —
+ *  used to persist Step-1 documents the moment the draft is created, instead of
+ *  deferring the upload to final submit. */
+export interface AttachDocumentsInput {
+  vat_certificate_file_id: number | null;
+  trade_license_file_id: number | null;
+}
+export interface AttachDocumentsResult {
+  ok: boolean;
+}
+
 export interface SubmitInquiryInput {
   template_id: string;
   template_version: number;

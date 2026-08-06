@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   FileText,
@@ -78,8 +79,9 @@ interface SvcBlock {
   enabled: boolean;
   lines: SvcLine[]; // empty ⇒ boolean toggle
 }
-/** An uploaded document's UI state: a freshly picked `file` (uploaded on submit),
- *  and/or an already-attached `fileId`/`name` (edit prefill). */
+/** An uploaded document's UI state: a freshly picked `file` (uploaded + attached
+ *  to the draft on Step-1 Continue), and/or an already-attached `fileId`/`name`
+ *  (edit prefill, or after the Step-1 upload swaps the File for its id). */
 type DocState = { fileId?: number; name?: string; url?: string; file?: File };
 
 interface PersistedDraft {
@@ -133,6 +135,44 @@ function monthsBetween(start: string, end: string): number {
   return Math.max(0, months);
 }
 
+/** Whole days between two yyyy-mm-dd dates (0 when unset/invalid or end ≤ start). */
+function daysBetween(start: string, end: string): number {
+  if (!start || !end) return 0;
+  const a = new Date(start);
+  const b = new Date(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b <= a) return 0;
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+/**
+ * Day-level term between two yyyy-mm-dd dates as "Y years, M months, D days"
+ * (trimming leading zero units) — mirrors the console/contract durationText so
+ * the portal shows the exact term (e.g. "1 month, 10 days"), not whole months.
+ * `t` localizes the unit words. "—" when unset/invalid or end ≤ start.
+ */
+interface DurationUnits {
+  year: string; years: string; month: string; months: string; day: string; days: string;
+}
+function durationText(start: string, end: string, u: DurationUnits): string {
+  if (!start || !end) return "—";
+  const a = new Date(start);
+  const b = new Date(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b <= a) return "—";
+  let years = b.getFullYear() - a.getFullYear();
+  let months = b.getMonth() - a.getMonth();
+  let days = b.getDate() - a.getDate();
+  if (days < 0) {
+    months -= 1;
+    days += new Date(b.getFullYear(), b.getMonth(), 0).getDate(); // days in prev month
+  }
+  if (months < 0) { years -= 1; months += 12; }
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} ${years === 1 ? u.year : u.years}`);
+  if (months > 0) parts.push(`${months} ${months === 1 ? u.month : u.months}`);
+  if (days > 0 || parts.length === 0) parts.push(`${days} ${days === 1 ? u.day : u.days}`);
+  return parts.join(", ");
+}
+
 /** Client-type enum index → persona (index-aligned: 1=Company→Corporate). */
 function personaForClientType(id: string): Persona {
   return PERSONAS[Math.max(0, Number(id) - 1)] ?? "Corporate";
@@ -182,14 +222,21 @@ function buildServices(available: InquiryService[], stored?: ServiceRequirement[
       if (l.kind === "CUSTOM") customLine = { description: l.description, quantity: l.quantity };
       else if (l.rateCardEntryId) qtyByCard.set(l.rateCardEntryId, l.quantity);
     });
-    const lines: SvcLine[] = svc.rateCards.map((rc) => ({
-      kind: "RATE_CARD" as const,
-      rateCardEntryId: rc.id,
-      rateCardName: rc.name,
-      description: "",
-      quantity: qtyByCard.get(rc.id) != null ? String(qtyByCard.get(rc.id)) : "",
-    }));
-    if (svc.rateCards.length) {
+    // Only PRIMARY services (catering / laundry / cleaning) expand to per-rate-card
+    // count rows + a Customized row. ADDITIONAL services are a plain on/off
+    // selection — no rate cards, no counts (rate card + billing is chosen later on
+    // the proposal). So they carry NO lines and render as a simple toggle.
+    const isPrimary = svc.group === GROUP_PRIMARY;
+    const lines: SvcLine[] = isPrimary
+      ? svc.rateCards.map((rc) => ({
+          kind: "RATE_CARD" as const,
+          rateCardEntryId: rc.id,
+          rateCardName: rc.name,
+          description: "",
+          quantity: qtyByCard.get(rc.id) != null ? String(qtyByCard.get(rc.id)) : "",
+        }))
+      : [];
+    if (svc.rateCards.length && isPrimary) {
       lines.push({
         kind: "CUSTOM",
         rateCardEntryId: "",
@@ -265,7 +312,8 @@ export function InquiryWizard() {
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>(saved.answers ?? {});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Uploaded documents (upload on submit).
+  // Uploaded documents. Freshly-picked files are uploaded + attached to the
+  // draft on Step-1 Continue (see next()); the id then lives in DocState.fileId.
   const [vatDoc, setVatDoc] = useState<DocState>({});
   const [tradeDoc, setTradeDoc] = useState<DocState>({});
 
@@ -297,6 +345,14 @@ export function InquiryWizard() {
 
   const totalBedspaces = accRows.reduce((s, r) => s + num(r.bedspaces), 0);
   const durationMonths = monthsBetween(mobilizationDate, moveOutDate);
+  // Day-level term for display (e.g. "1 month, 10 days"); whole months still go
+  // to the gateway as duration_months. Any positive term is allowed.
+  const durationDaysVal = daysBetween(mobilizationDate, moveOutDate);
+  const durationLabel = durationText(mobilizationDate, moveOutDate, {
+    year: t("f.duration.year"), years: t("f.duration.years"),
+    month: t("f.duration.month"), months: t("f.duration.months"),
+    day: t("f.duration.day"), days: t("f.duration.days"),
+  });
 
   // Rebuild the matrix / services whenever the masters or stored requirement change.
   useEffect(() => {
@@ -452,7 +508,7 @@ export function InquiryWizard() {
       if (customAcc && !customAcc.description.trim()) e.accommodation = t("err.customAcc");
       if (!mobilizationDate) e.mobilization = t("err.required");
       if (!moveOutDate) e.moveOut = t("err.required");
-      else if (durationMonths < 1) e.moveOut = t("err.moveOutAfter");
+      else if (durationDaysVal < 1) e.moveOut = t("err.moveOutAfter");
       // Services — each enabled quantity service needs ≥1 count, custom needs a
       // description, and no service may exceed the total bedspaces.
       for (const b of svcBlocks.filter((x) => x.enabled && x.lines.length > 0)) {
@@ -489,20 +545,37 @@ export function InquiryWizard() {
     setErrors(e);
     if (Object.keys(e).some((k) => e[k])) return;
 
-    // Step 1 → create the Draft inquiry (once). Skipped in edit mode.
-    if (step === 0 && !inquiryId) {
+    // Step 1 → create the Draft inquiry (once), then upload any freshly-picked
+    // documents NOW and attach their file ids to the draft — so the file lands
+    // in Facilio at Step 1 rather than being deferred to the final submit.
+    if (step === 0) {
       setBusy(true);
       setApiError(null);
       try {
-        const res = await api.createInquiry({
-          persona: personaForClientType(clientTypeId),
-          contactName: contact.fullName.trim(),
-          company: contact.company.trim(),
-          mobile: contact.mobile.trim(),
-          email: contact.email.trim(),
-        });
-        setInquiryId(res.inquiry_id);
-        setInquiryCode(res.inquiry_code);
+        let id = inquiryId;
+        if (!id) {
+          const res = await api.createInquiry({
+            persona: personaForClientType(clientTypeId),
+            contactName: contact.fullName.trim(),
+            company: contact.company.trim(),
+            mobile: contact.mobile.trim(),
+            email: contact.email.trim(),
+          });
+          id = res.inquiry_id;
+          setInquiryId(res.inquiry_id);
+          setInquiryCode(res.inquiry_code);
+        }
+        if (id && (vatDoc.file || tradeDoc.file)) {
+          const vatFileId = vatDoc.file ? (await api.uploadFile(vatDoc.file)).fileId : vatDoc.fileId ?? null;
+          const tradeFileId = tradeDoc.file ? (await api.uploadFile(tradeDoc.file)).fileId : tradeDoc.fileId ?? null;
+          await api.attachInquiryDocuments(id, {
+            vat_certificate_file_id: vatFileId,
+            trade_license_file_id: tradeFileId,
+          });
+          // Swap the local File for its attached id so the final submit doesn't re-upload it.
+          if (vatDoc.file && vatFileId != null) setVatDoc({ fileId: vatFileId, name: vatDoc.name ?? vatDoc.file.name });
+          if (tradeDoc.file && tradeFileId != null) setTradeDoc({ fileId: tradeFileId, name: tradeDoc.name ?? tradeDoc.file.name });
+        }
       } catch {
         setApiError(t("err.generic"));
         setBusy(false);
@@ -517,6 +590,7 @@ export function InquiryWizard() {
 
   function back() {
     if (step > 0) setStep(step - 1);
+    setErrors({}); // don't carry a step's validation summary back to the previous step
     window.scrollTo({ top: 0 });
   }
 
@@ -566,6 +640,31 @@ export function InquiryWizard() {
   }
 
   const timeLeft = useMemo(() => Math.max(1, 3 - step), [step]);
+
+  // Documents are optional, but on the Review step we warn (not block) when one
+  // hasn't been attached — a doc is "missing" when nothing is picked and no file
+  // is already on record. Lets the client submit knowingly or go back to add it.
+  const missingDocLabels = [
+    !vatDoc.file && vatDoc.fileId == null ? t("f.vat") : null,
+    !tradeDoc.file && tradeDoc.fileId == null ? t("f.tradeLicense") : null,
+  ].filter(Boolean) as string[];
+
+  // A summary of the current step's validation errors, shown next to Continue so
+  // the user isn't left hunting for the inline messages. Generic-required fields
+  // get a field-label prefix; descriptive messages (accommodation / services /
+  // dynamic questions) already name their subject, so they show as-is.
+  const ERROR_FIELD_LABELS: Record<string, string> = {
+    fullName: "f.fullName", mobile: "f.mobile", email: "f.email",
+    mobilization: "f.mobilization", moveOut: "f.moveOut",
+  };
+  const errorSummary = Object.entries(errors)
+    .filter(([, msg]) => !!msg)
+    .map(([key, msg]) => {
+      if (ERROR_FIELD_LABELS[key]) return `${t(ERROR_FIELD_LABELS[key] as Parameters<typeof t>[0])}: ${msg}`;
+      const q = template?.questions.find((qq) => qq.id === key);
+      if (q) return `${lang === "ar" ? q.label_ar : q.label_en}: ${msg}`;
+      return msg;
+    });
 
   if (submittedCode) {
     return <SuccessScreen code={submittedCode} email={contact.email} isEdit={isEdit} />;
@@ -626,7 +725,7 @@ export function InquiryWizard() {
               setMobilizationDate={setMobilizationDate}
               moveOutDate={moveOutDate}
               setMoveOutDate={setMoveOutDate}
-              durationMonths={durationMonths}
+              durationLabel={durationLabel}
               errors={errors}
               clearError={clearError}
             />
@@ -653,7 +752,7 @@ export function InquiryWizard() {
               svcBlocks={svcBlocks}
               mobilizationDate={mobilizationDate}
               moveOutDate={moveOutDate}
-              durationMonths={durationMonths}
+              durationLabel={durationLabel}
               template={template}
               answers={answers}
               lang={lang}
@@ -665,6 +764,30 @@ export function InquiryWizard() {
         {apiError && (
           <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {apiError}
+          </div>
+        )}
+
+        {step === 3 && missingDocLabels.length > 0 && (
+          <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">{t("wiz.docsMissing.title")}</p>
+              <p className="mt-0.5">
+                {t("wiz.docsMissing.body", { docs: missingDocLabels.join(lang === "ar" ? "، " : ", ") })}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {step < 3 && errorSummary.length > 0 && (
+          <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">{t("wiz.fixErrors.title")}</p>
+              <ul className="mt-1 list-disc space-y-0.5 ps-4">
+                {errorSummary.map((txt, i) => <li key={i}>{txt}</li>)}
+              </ul>
+            </div>
           </div>
         )}
 
@@ -947,7 +1070,7 @@ function StepRequirement({
   setMobilizationDate,
   moveOutDate,
   setMoveOutDate,
-  durationMonths,
+  durationLabel,
   errors,
   clearError,
 }: {
@@ -962,7 +1085,7 @@ function StepRequirement({
   setMobilizationDate: (v: string) => void;
   moveOutDate: string;
   setMoveOutDate: (v: string) => void;
-  durationMonths: number;
+  durationLabel: string;
   errors: Record<string, string>;
   clearError: (k: string) => void;
 }) {
@@ -1020,10 +1143,10 @@ function StepRequirement({
           <div
             className={cn(
               "flex h-11 items-center rounded-lg border border-line bg-canvas px-3.5 text-[15px] font-medium",
-              durationMonths > 0 ? "text-ink-soft" : "text-muted/70"
+              durationLabel !== "—" ? "text-ink-soft" : "text-muted/70"
             )}
           >
-            {durationMonths > 0 ? `${durationMonths} ${t("f.months")}` : "—"}
+            {durationLabel}
           </div>
         </Field>
       </div>
@@ -1251,7 +1374,7 @@ function StepReview({
   svcBlocks,
   mobilizationDate,
   moveOutDate,
-  durationMonths,
+  durationLabel,
   template,
   answers,
   lang,
@@ -1267,7 +1390,7 @@ function StepReview({
   svcBlocks: SvcBlock[];
   mobilizationDate: string;
   moveOutDate: string;
-  durationMonths: number;
+  durationLabel: string;
   template: Template | null;
   answers: Record<string, AnswerValue>;
   lang: "en" | "ar";
@@ -1307,7 +1430,7 @@ function StepReview({
         <Row label={t("f.moveOut")} value={moveOutDate || dash} />
         <Row
           label={t("f.duration.auto")}
-          value={durationMonths > 0 ? `${durationMonths} ${t("f.months")}` : dash}
+          value={durationLabel !== "—" ? durationLabel : dash}
         />
         <Row label={t("f.rooms")} value={accText || dash} />
         <Row label={t("f.total")} value={totalBedspaces ? String(totalBedspaces) : dash} />

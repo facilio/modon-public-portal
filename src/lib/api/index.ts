@@ -7,6 +7,8 @@
 import { mockApi } from "./mocks";
 import {
   ApiError,
+  type AttachDocumentsInput,
+  type AttachDocumentsResult,
   type CreateInquiryInput,
   type CreateInquiryResult,
   type InquiryDetail,
@@ -122,6 +124,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+
+  // POST /inquiries/{id}/documents → attach uploaded VAT / trade-license file
+  // ids to a draft inquiry (Step-1 upload, before final submit).
+  attachInquiryDocuments(
+    inquiryId: string,
+    input: AttachDocumentsInput
+  ): Promise<AttachDocumentsResult> {
+    if (!isBackendConfigured) return mockApi.attachInquiryDocuments();
+    return request<AttachDocumentsResult>(
+      `/inquiries/${encodeURIComponent(inquiryId)}/documents`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
   },
 
   // POST /inquiries/{id}/submit

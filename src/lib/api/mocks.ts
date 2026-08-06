@@ -15,6 +15,7 @@ import {
 import {
   ApiError,
   type AnswerRow,
+  type AttachDocumentsResult,
   type CreateInquiryInput,
   type CreateInquiryResult,
   type InquiryDetail,
@@ -320,6 +321,10 @@ export const mockApi = {
 
   submitInquiry(inquiryCode?: string): Promise<SubmitInquiryResult> {
     return wait({ ok: true, inquiry_code: inquiryCode ?? generateInquiryCode() });
+  },
+
+  attachInquiryDocuments(): Promise<AttachDocumentsResult> {
+    return wait({ ok: true });
   },
 
   // ── Status: Code + Email ───────────────────────────────────────────────────

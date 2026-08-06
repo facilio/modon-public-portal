@@ -25,7 +25,10 @@ const TEMPLATE_MODULE =
 // Room type is a LOOKUP to this module (same one rate cards / accommodation use).
 // Read to serve GET /room-types.
 const ROOMTYPE_MODULE = process.env.FACILIO_ROOMTYPE_MODULE ?? "custom_roomtype";
-// Beds-per-room on a room type → the occupancy label ("8 in 1").
+// Occupancy (persons/room) is the authoritative figure for the occupancy label
+// ("8 in 1"); number_of_beds is the legacy fallback when occupancy isn't set.
+// Mirrors the console's fetchRoomTypeOptions.
+const ROOMTYPE_OCCUPANCY_FIELD = "occupancy__persons_room__custom_roomtype";
 const ROOMTYPE_BEDS_FIELD = "number_of_beds_custom_roomtype";
 // Landing-page catalogs: services master + clusters (a "cluster" is the system
 // zone module; building count comes from building records' cluster lookup).
@@ -39,11 +42,13 @@ const SERVICE_GROUP_ADDITIONAL = 3;
 const RATECARD_MODULE = process.env.FACILIO_RATECARD_MODULE ?? "custom_ratecard";
 const RATECARD_TYPE_FIELD = "card_type_custom_ratecard_1"; // lookup → custom_services_1
 const RATECARD_ACTIVE_STATE = Number(process.env.FACILIO_RATECARD_ACTIVE_STATE ?? 162121);
-// Facilio file-upload endpoint (API-key REST). UNVERIFIED against the live host —
-// the exact path isn't in the public docs (the SDK's uploadFile() returns
-// { fileId }). Override via env if the default 404s.
+// Facilio file-upload endpoint (API-key REST). VERIFIED against the live host
+// (2026-08-05): POST /api/v3/files with the multipart part named `files` (plural)
+// → 200 { code:0, data:{ attachments:{ "<filename>": <fileId> } } }. The singular
+// `file` part is silently ignored (200 with empty data:{} → null fileId → nothing
+// gets written to the FILE field). Override via env only if the host changes.
 const FACILIO_UPLOAD_PATH = process.env.FACILIO_UPLOAD_PATH ?? "/api/v3/files";
-const FACILIO_UPLOAD_FIELD = process.env.FACILIO_UPLOAD_FIELD ?? "file";
+const FACILIO_UPLOAD_FIELD = process.env.FACILIO_UPLOAD_FIELD ?? "files";
 const CLUSTER_MODULE = process.env.FACILIO_CLUSTER_MODULE ?? "zone";
 const BUILDING_MODULE = process.env.FACILIO_BUILDING_MODULE ?? "building";
 // Building's cluster lookup field (→ zone/cluster). From the console's model.
@@ -219,10 +224,21 @@ async function uploadFacilioFile({ filename, contentType, dataBase64 } = {}) {
     return { status: res.status, body };
   }
 
-  // Defensively pull the file id out of common Facilio response shapes.
+  // Pull the file id out of the Facilio response. The verified shape is
+  // { data: { attachments: { "<filename>": <fileId> } } } — one entry since we
+  // upload a single file. Fall back to older flat shapes defensively.
+  const attachments = body?.data?.attachments;
+  const attachId =
+    attachments && typeof attachments === "object"
+      ? Object.values(attachments).find((v) => v != null)
+      : null;
   const fileId =
-    body?.fileId ?? body?.id ?? body?.data?.fileId ?? body?.data?.id ?? null;
-  return { status: 200, body: { fileId: fileId != null ? Number(fileId) : null } };
+    attachId ?? body?.fileId ?? body?.id ?? body?.data?.fileId ?? body?.data?.id ?? null;
+  if (fileId == null) {
+    console.error(`[upload] ${res.status} ${FACILIO_UPLOAD_PATH}: no fileId in response ${text || "(empty)"}`);
+    return { status: 502, body: { error: "upload returned no file id" } };
+  }
+  return { status: 200, body: { fileId: Number(fileId) } };
 }
 
 /** Random public inquiry code, unambiguous charset (no 0/O/1/I) — E-22. */
@@ -340,8 +356,9 @@ function parseQuestions(raw) {
 
 // ── GET /room-types ─────────────────────────────────────────────────────────
 // Room-type master records (custom_roomtype) → matrix rows for the Requirement
-// step: [{id, name, bedsPerRoom, occupancy}]. Occupancy ("8 in 1") is derived
-// from number_of_beds. Mirrors the console's fetchRoomTypeOptions.
+// step: [{id, name, bedsPerRoom, occupancy}]. Occupancy ("8 in 1") comes from
+// occupancy__persons_room__custom_roomtype, falling back to number_of_beds when
+// unset. Mirrors the console's fetchRoomTypeOptions.
 async function getRoomTypes() {
   if (!FACILIO_API_KEY)
     return { status: 500, body: { error: "Gateway missing FACILIO_API_KEY" } };
@@ -353,7 +370,8 @@ async function getRoomTypes() {
   const opts = unwrapList(body, ROOMTYPE_MODULE)
     .filter((r) => r?.id != null)
     .map((r) => {
-      const beds = Number(r[ROOMTYPE_BEDS_FIELD]) || null;
+      const beds =
+        Number(r[ROOMTYPE_OCCUPANCY_FIELD]) || Number(r[ROOMTYPE_BEDS_FIELD]) || null;
       return {
         id: String(r.id),
         name: String(r.name ?? r.id),
@@ -600,6 +618,27 @@ async function createInquiry({ persona, name, contactName, company, mobile, emai
       inquiry_code: rec[IF.code] ?? inquiryCode,
     },
   };
+}
+
+// ── POST /inquiries/{id}/documents ─────────────────────────────────────────────
+// Attach uploaded VAT / trade-license file ids to an existing (draft) inquiry —
+// lets the portal persist Step-1 documents the moment the draft is created,
+// instead of deferring the upload to final submit. FILE fields → `<field>Id`.
+async function attachInquiryDocuments(inquiryId, input) {
+  if (!FACILIO_API_KEY)
+    return { status: 500, body: { error: "Gateway missing FACILIO_API_KEY" } };
+
+  const data = {};
+  if (input?.vat_certificate_file_id != null) data[`${IF.vatCertificate}Id`] = Number(input.vat_certificate_file_id);
+  if (input?.trade_license_file_id != null) data[`${IF.tradeLicense}Id`] = Number(input.trade_license_file_id);
+  if (Object.keys(data).length === 0) return { status: 200, body: { ok: true } };
+
+  const { status, body } = await facilioFetch(
+    `/api/v3/modules/${INQUIRY_MODULE}/${encodeURIComponent(inquiryId)}`,
+    { method: "PATCH", body: JSON.stringify({ data }) }
+  );
+  if (status >= 400) return { status, body };
+  return { status: 200, body: { ok: true } };
 }
 
 // ── POST /inquiries/{id}/submit ────────────────────────────────────────────────
@@ -893,21 +932,30 @@ function parseServiceRequirements(v) {
   });
 }
 
-/** Uploaded document off a FILE field — id on `<field>Id`, hydrated object may
- *  carry a url + name. Null when nothing attached (mirrors the console docInfo). */
+/** Uploaded document off a FILE field. Facilio hydrates a populated FILE field
+ *  as FLAT sibling keys on the record (verified 2026-08-05):
+ *    <field>Id, <field>FileName, <field>ContentType,
+ *    <field>Url          → /…/api/v2/files/preview/<id>?version=revive
+ *    <field>DownloadUrl  → /…/api/v2/files/download/<id>?version=revive
+ *  (NOT a nested `record[field]` object). Null when nothing attached. */
 function docInfo(rec, field) {
   const doc = {};
   const directId = rec[`${field}Id`];
   if (directId != null && !Number.isNaN(Number(directId))) doc.fileId = Number(directId);
+  const url = rec[`${field}DownloadUrl`] ?? rec[`${field}Url`];
+  if (typeof url === "string" && url) doc.url = url;
+  const name = rec[`${field}FileName`];
+  if (typeof name === "string" && name) doc.name = name;
+  // Legacy fallback: some payloads may still nest the file under record[field].
   const raw = rec[field];
   if (raw && typeof raw === "object") {
     const nested = raw.file && typeof raw.file === "object" ? raw.file : {};
     const id = raw.fileId ?? raw.id ?? nested.fileId ?? nested.id;
     if (doc.fileId == null && id != null && !Number.isNaN(Number(id))) doc.fileId = Number(id);
-    const url = raw.url ?? raw.downloadUrl ?? raw.fileUrl ?? raw.previewUrl ?? nested.url ?? nested.downloadUrl;
-    if (typeof url === "string" && url) doc.url = url;
-    const name = raw.fileName ?? raw.name ?? raw.originalFileName ?? nested.fileName ?? nested.name;
-    if (typeof name === "string" && name) doc.name = name;
+    const u = raw.url ?? raw.downloadUrl ?? raw.fileUrl ?? raw.previewUrl ?? nested.url ?? nested.downloadUrl;
+    if (!doc.url && typeof u === "string" && u) doc.url = u;
+    const n = raw.fileName ?? raw.name ?? raw.originalFileName ?? nested.fileName ?? nested.name;
+    if (!doc.name && typeof n === "string" && n) doc.name = n;
   }
   return doc.fileId != null || doc.url != null ? doc : null;
 }
@@ -1074,6 +1122,15 @@ async function route({ method, path, query, body, origin }) {
       return done(status, b);
     }
 
+    const docsMatch = path.match(/^\/inquiries\/([^/]+)\/documents$/);
+    if (method === "POST" && docsMatch) {
+      const { status, body: b } = await attachInquiryDocuments(
+        decodeURIComponent(docsMatch[1]),
+        body ?? {}
+      );
+      return done(status, b);
+    }
+
     if (method === "POST" && path === "/status/lookup") {
       const { code, email } = body ?? {};
       if (!code || !email)
@@ -1197,7 +1254,7 @@ if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
       `[gateway] inquiry fields: company=${IF.company} roomLines=${IF.roomLines} services=${IF.services}`
     );
     console.log(`[gateway] allowed origins: ${CORS_ORIGINS.join(", ")}`);
-    console.log(`[gateway] routes: GET /templates/active · GET /room-types · GET /services · GET /inquiry-services · GET /clusters · GET /client-types · POST /inquiries · POST /inquiries/{id}/submit · POST /uploads · POST /status/lookup · GET /inquiries/{code}/edit · GET /inquiries/{code} · (501) status/otp/*`);
+    console.log(`[gateway] routes: GET /templates/active · GET /room-types · GET /services · GET /inquiry-services · GET /clusters · GET /client-types · POST /inquiries · POST /inquiries/{id}/documents · POST /inquiries/{id}/submit · POST /uploads · POST /status/lookup · GET /inquiries/{code}/edit · GET /inquiries/{code} · (501) status/otp/*`);
     if (!FACILIO_API_KEY) console.warn("[gateway] WARNING: FACILIO_API_KEY is not set");
   });
 }
