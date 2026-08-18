@@ -3,6 +3,7 @@ import { Globe } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
 import { cn } from "../../lib/cn";
 import facilioLogo from "../../assets/facilio-logo.svg";
+import cwrcLogo from "../../assets/cwrc-logo.svg";
 
 /** facilio logo (brand SVG). */
 export function FacilioMark({ className }: { className?: string }) {
@@ -20,9 +21,13 @@ export function Logo() {
     <Link to="/" className="flex items-center gap-3">
       <FacilioMark />
       <span className="h-6 w-px bg-line" />
-      <span className="text-2xl font-extrabold tracking-tight text-ink">
-        MODON
-      </span>
+      <img
+        src={cwrcLogo}
+        alt="CWRC — Construction Workers Residential City"
+        width={98}
+        height={36}
+        className="h-9 w-auto"
+      />
     </Link>
   );
 }
