@@ -294,10 +294,31 @@ export interface OfferDecisionResult {
   status: PublicStatus;
 }
 
-/** Uniform error thrown by the client for any public-lookup failure (E-21). */
+/** Uniform error thrown by the client for any public-lookup failure (E-21).
+ *  Carries the request context (url / HTTP status / parsed response body) so a
+ *  failure can actually be identified instead of collapsing into "generic". */
 export class ApiError extends Error {
-  constructor(message: string) {
+  readonly url?: string;
+  readonly status?: number;
+  readonly body?: unknown;
+  /** The underlying failure (e.g. the TypeError from a blocked fetch), if any. */
+  readonly reason?: unknown;
+
+  constructor(
+    message: string,
+    info?: { url?: string; status?: number; body?: unknown; cause?: unknown }
+  ) {
     super(message);
     this.name = "ApiError";
+    this.url = info?.url;
+    this.status = info?.status;
+    this.body = info?.body;
+    this.reason = info?.cause;
+  }
+
+  /** One-line, log/diagnostics-friendly rendering: "POST /inquiries → 400: ...". */
+  get detail(): string {
+    const where = [this.status, this.url].filter(Boolean).join(" ");
+    return where ? `${where}: ${this.message}` : this.message;
   }
 }

@@ -28,8 +28,15 @@ import {
 } from "./types";
 
 const BASE = (import.meta.env.VITE_BFF_BASE_URL as string | undefined)?.trim();
-console.log('base', BASE);
 export const isBackendConfigured = Boolean(BASE);
+
+if (import.meta.env.DEV) {
+  console.info(
+    isBackendConfigured
+      ? `[api] live backend: ${BASE}`
+      : "[api] VITE_BFF_BASE_URL is not set — running on in-browser mocks"
+  );
+}
 
 /** Read a File as a bare base64 string (no data: prefix) for the upload proxy. */
 function fileToBase64(file: File): Promise<string> {
@@ -46,18 +53,45 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  console.log(`${BASE}${path}`);
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!res.ok) {
+  const method = init?.method ?? "GET";
+  const url = `${BASE}${path}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "Content-Type": "application/json" },
+      ...init,
+    });
+  } catch (err) {
+    // No response at all: gateway down, wrong VITE_BFF_BASE_URL, DNS/TLS, or the
+    // origin was rejected by the gateway's CORS allowlist. The browser hides the
+    // reason from JS, so name the likely causes here rather than saying "generic".
+    console.error(`[api] ${method} ${url} — no response (network/CORS)`, err);
     throw new ApiError(
-      (body && typeof body === "object" && body.error) || "generic"
+      "Could not reach the gateway (network, CORS, or wrong VITE_BFF_BASE_URL)",
+      { url, cause: err }
     );
   }
+
+  const text = await res.text();
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    // Not JSON — an HTML error page or a proxy response. Keep the raw text.
+    body = { error: text };
+  }
+
+  if (!res.ok) {
+    const asObj = body as { error?: unknown; message?: unknown } | null;
+    const detail =
+      (asObj && typeof asObj === "object" && (asObj.error ?? asObj.message)) ||
+      text ||
+      res.statusText;
+    console.error(`[api] ${method} ${url} → ${res.status}`, body);
+    throw new ApiError(String(detail), { url, status: res.status, body });
+  }
+
   return body as T;
 }
 
@@ -145,7 +179,6 @@ export const api = {
     input: SubmitInquiryInput,
     inquiryCode?: string
   ): Promise<SubmitInquiryResult> {
-    console.log('backend configured', isBackendConfigured);
     if (!isBackendConfigured) return mockApi.submitInquiry(inquiryCode);
     return request<SubmitInquiryResult>(
       `/inquiries/${encodeURIComponent(inquiryId)}/submit`,

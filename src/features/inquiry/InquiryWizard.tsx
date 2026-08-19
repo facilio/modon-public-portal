@@ -37,6 +37,25 @@ import {
   type Template,
 } from "../../lib/api";
 
+// ── Error reporting ───────────────────────────────────────────────────────────
+// Every wizard failure used to collapse into "Something went wrong", with the
+// cause dropped on the floor — which made a live-backend failure impossible to
+// place. Log the full cause always; show the detail in the UI only in dev, so a
+// public applicant still sees the friendly copy in production.
+function reportApiError(what: string, err: unknown) {
+  if (err instanceof ApiError) {
+    console.error(`[wizard] ${what} failed — ${err.detail}`, err.body ?? err);
+  } else {
+    console.error(`[wizard] ${what} failed`, err);
+  }
+}
+
+function describeError(err: unknown, fallback: string): string {
+  if (!import.meta.env.DEV) return fallback;
+  if (err instanceof ApiError) return `${fallback} (${err.detail})`;
+  return err instanceof Error ? `${fallback} (${err.message})` : fallback;
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PERSONAS: Persona[] = ["Corporate", "Sponsor"];
 // custom_services_1 group enum — Primary (2) / Additional (3) headings only.
@@ -369,11 +388,18 @@ export function InquiryWizard() {
     api
       .getRoomTypes()
       .then((rts) => !cancelled && setRoomTypeOptions(rts))
+      // Without room types the matrix is empty, so Step 2 can never reach a
+      // positive bed total and Continue blocks with no way forward — an
+      // unhandled rejection here would leave that unexplained.
+      .catch((err) => {
+        reportApiError("load room types", err);
+        if (!cancelled) setApiError(describeError(err, t("err.generic")));
+      })
       .finally(() => !cancelled && setRoomTypesLoading(false));
     api
       .getInquiryServices()
       .then((svcs) => !cancelled && setServiceOptions(svcs))
-      .catch(() => {});
+      .catch((err) => reportApiError("load inquiry services", err));
     return () => {
       cancelled = true;
     };
@@ -410,6 +436,12 @@ export function InquiryWizard() {
     api
       .getActiveTemplate(clientTypeId)
       .then((tpl) => !cancelled && setTemplate(tpl))
+      // A null template makes Step 3 empty AND blocks submit() — surface it here
+      // rather than letting the wizard dead-end on the Review step.
+      .catch((err) => {
+        reportApiError(`load template for clientType=${clientTypeId}`, err);
+        if (!cancelled) setApiError(describeError(err, t("err.generic")));
+      })
       .finally(() => !cancelled && setTemplateLoading(false));
     return () => {
       cancelled = true;
@@ -576,8 +608,9 @@ export function InquiryWizard() {
           if (vatDoc.file && vatFileId != null) setVatDoc({ fileId: vatFileId, name: vatDoc.name ?? vatDoc.file.name });
           if (tradeDoc.file && tradeFileId != null) setTradeDoc({ fileId: tradeFileId, name: tradeDoc.name ?? tradeDoc.file.name });
         }
-      } catch {
-        setApiError(t("err.generic"));
+      } catch (err) {
+        reportApiError("create/attach inquiry", err);
+        setApiError(describeError(err, t("err.generic")));
         setBusy(false);
         return;
       }
@@ -595,7 +628,23 @@ export function InquiryWizard() {
   }
 
   async function submit() {
-    if (!inquiryId || !template) return;
+    // Both are set earlier in the flow (inquiryId by the Step-1 create, template
+    // by the client-type effect). If either is missing the click would otherwise
+    // do nothing at all — say so instead of dead-ending on a silent return.
+    if (!inquiryId || !template) {
+      console.error("[wizard] submit blocked before any request was sent", {
+        inquiryId,
+        templateLoaded: Boolean(template),
+      });
+      setApiError(
+        import.meta.env.DEV
+          ? `${t("err.generic")} (submit blocked: ${
+              !inquiryId ? "no inquiry id from POST /inquiries" : "questionnaire template not loaded"
+            })`
+          : t("err.generic")
+      );
+      return;
+    }
     setBusy(true);
     setApiError(null);
     try {
@@ -633,7 +682,8 @@ export function InquiryWizard() {
       clearDraft();
       window.scrollTo({ top: 0 });
     } catch (err) {
-      setApiError(err instanceof ApiError ? t("err.generic") : t("err.generic"));
+      reportApiError("submit inquiry", err);
+      setApiError(describeError(err, t("err.generic")));
     } finally {
       setBusy(false);
     }
