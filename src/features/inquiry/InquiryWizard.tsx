@@ -177,32 +177,48 @@ function clearDraft() {
 
 const num = (s: string) => Number(s) || 0;
 
+/**
+ * THE END DATE IS PART OF THE TERM. A term of 24 Sep 2026 → 23 Sep 2027 is one
+ * full year, not "11 months, 30 days" — everything below measures to the
+ * instant the term ENDS: midnight at the start of the day AFTER the end date.
+ * Built with calendar arithmetic (not +24h) so a DST transition inside the
+ * term can't shift the result by an hour and tip a whole-month boundary over.
+ * Mirrors the console/contracts' single shared implementation (src/lib/
+ * duration.ts) — the two apps used to compute this differently and drifted,
+ * which is exactly this bug; don't reintroduce the exclusive-end version.
+ */
+function inclusiveEnd(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+}
+
 /** Whole completed months between two yyyy-mm-dd dates (0 when unset/invalid or
- *  end ≤ start) — mirrors the console's mobilization → move-out derivation. */
+ *  end < start) — mirrors the console's mobilization → move-out derivation. */
 function monthsBetween(start: string, end: string): number {
   if (!start || !end) return 0;
   const a = new Date(start);
-  const b = new Date(end);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b <= a) return 0;
+  const b0 = new Date(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b0.getTime()) || b0 < a) return 0;
+  const b = inclusiveEnd(b0);
   let months = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
   if (b.getDate() < a.getDate()) months -= 1;
   return Math.max(0, months);
 }
 
-/** Whole days between two yyyy-mm-dd dates (0 when unset/invalid or end ≤ start). */
+/** Whole days between two yyyy-mm-dd dates, end date included (0 when unset/
+ *  invalid or end < start). Same-day start/end is a 1-day term. */
 function daysBetween(start: string, end: string): number {
   if (!start || !end) return 0;
   const a = new Date(start);
-  const b = new Date(end);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b <= a) return 0;
-  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+  const b0 = new Date(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b0.getTime()) || b0 < a) return 0;
+  return Math.round((inclusiveEnd(b0).getTime() - a.getTime()) / 86_400_000);
 }
 
 /**
  * Day-level term between two yyyy-mm-dd dates as "Y years, M months, D days"
  * (trimming leading zero units) — mirrors the console/contract durationText so
- * the portal shows the exact term (e.g. "1 month, 10 days"), not whole months.
- * `t` localizes the unit words. "—" when unset/invalid or end ≤ start.
+ * the portal shows the exact term (e.g. "1 year", not "11 months, 30 days").
+ * `t` localizes the unit words. "—" when unset/invalid or end < start.
  */
 interface DurationUnits {
   year: string; years: string; month: string; months: string; day: string; days: string;
@@ -210,8 +226,9 @@ interface DurationUnits {
 function durationText(start: string, end: string, u: DurationUnits): string {
   if (!start || !end) return "—";
   const a = new Date(start);
-  const b = new Date(end);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b <= a) return "—";
+  const b0 = new Date(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b0.getTime()) || b0 < a) return "—";
+  const b = inclusiveEnd(b0);
   let years = b.getFullYear() - a.getFullYear();
   let months = b.getMonth() - a.getMonth();
   let days = b.getDate() - a.getDate();
