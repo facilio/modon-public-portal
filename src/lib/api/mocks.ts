@@ -271,21 +271,30 @@ export const mockApi = {
   getInquiryServices(): Promise<InquiryService[]> {
     return wait([
       {
-        serviceId: "svc-catering", serviceName: "Catering", group: 2,
+        serviceId: "svc-laundry", serviceName: "Laundry", group: 2,
         rateCards: [
-          { id: "rc-cat-veg", name: "Catering Basic-7" },
-          { id: "rc-cat-non", name: "Catering Junior-10" },
-        ],
-      },
-      { serviceId: "svc-cleaning", serviceName: "Cleaning", group: 2, rateCards: [] },
-      {
-        serviceId: "svc-laundry", serviceName: "Laundry", group: 3,
-        rateCards: [
-          { id: "rc-lnd-wf", name: "Wash + Fold" },
+          { id: "rc-lnd-wf", name: "Wash + Fold", isDefault: true },
           { id: "rc-lnd-wfi", name: "Wash + Fold + Iron" },
         ],
       },
+      // Meal arrangement — same group (2/Primary) as other rate-card services,
+      // flagged separately so it gets its own heading on the Requirement step.
+      {
+        serviceId: "svc-catering", serviceName: "Catering", group: 2, isMealArrangement: true,
+        rateCards: [
+          { id: "rc-cat-veg", name: "Catering Basic-7", isDefault: true },
+          { id: "rc-cat-non", name: "Catering Junior-10" },
+        ],
+      },
+      { serviceId: "svc-messhall", serviceName: "Mess Hall", group: 2, isMealArrangement: true, rateCards: [] },
+      { serviceId: "svc-selfcook", serviceName: "Self Cooking", group: 2, isMealArrangement: true, rateCards: [] },
+      // Food Parcel depends on Catering being on (see isFoodParcelService/
+      // canSelectFoodParcel) — additional group, no rate cards.
+      { serviceId: "svc-foodparcel", serviceName: "Food Parcel", group: 3, rateCards: [] },
+      // Access Card is always on, every resident (see isAccessCardService).
+      { serviceId: "svc-accesscard", serviceName: "Access Card", group: 3, rateCards: [] },
       { serviceId: "svc-wifi", serviceName: "Wifi", group: 3, rateCards: [] },
+      { serviceId: "svc-gym", serviceName: "Gym", group: 3, rateCards: [] },
     ]);
   },
 
@@ -387,6 +396,7 @@ export const mockApi = {
         email: "sara@apex.example",
       },
       trade_license_number: "CN-1234567",
+      additional_questions: "",
       requirement: { moveIn: "2026-09-01", moveOut: "2027-09-01", duration: "12" },
       accommodation: [
         { kind: "ROOM_TYPE", roomTypeId: "rt-shared-4", roomType: "Shared-4", description: "", bedspaces: 40 },

@@ -15,7 +15,8 @@ import { useLang } from "../../i18n/LanguageContext";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Field } from "../../components/ui/Field";
-import { Input } from "../../components/ui/Input";
+import { Input, inputClass } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
 import { DatePicker } from "../../components/ui/DatePicker";
 import { Stepper } from "../../components/ui/Stepper";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -30,6 +31,7 @@ import {
   type ClientTypeOption,
   type InquiryDoc,
   type InquiryService,
+  type InquiryServiceRateCard,
   type Persona,
   type PublicStatus,
   type RoomTypeOption,
@@ -57,10 +59,37 @@ function describeError(err: unknown, fallback: string): string {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// A plain 10-digit local number, or the same 10 digits behind a 1-4 digit
+// country code (with or without a leading "+"). Spaces/dashes are stripped
+// before testing.
+const MOBILE_RE = /^\+?\d{0,4}\d{10}$/;
+function isValidMobile(v: string): boolean {
+  return MOBILE_RE.test(v.replace(/[\s-]/g, ""));
+}
 const PERSONAS: Persona[] = ["Corporate", "Sponsor"];
 // custom_services_1 group enum — Primary (2) / Additional (3) headings only.
+// Meal-arrangement services (Catering / Mess Hall / Self Cooking) are still
+// group 2 (Primary) — `isMealArrangement` just gives them their own heading.
 const GROUP_PRIMARY = 2;
 const GROUP_ADDITIONAL = 3;
+/** Sentinel value picked in a rate-card dropdown for a freeform/CUSTOM line. */
+const CUSTOM_OPT = "__custom__";
+
+// ── Service name rules (Food Parcel ⇢ needs Catering; Access Card ⇢ always
+// on) — name-matching rather than an id, since the catalog id isn't stable
+// across environments. Mirrors the console's shared serviceRules.ts. ──────────
+function namesMatch(name: string, target: string): boolean {
+  return name.trim().toLowerCase() === target;
+}
+function isCateringService(name: string): boolean {
+  return namesMatch(name, "catering");
+}
+function isFoodParcelService(name: string): boolean {
+  return namesMatch(name, "food parcel");
+}
+function isAccessCardService(name: string): boolean {
+  return namesMatch(name, "access card");
+}
 
 // ── Draft persistence ─────────────────────────────────────────────────────────
 // v3: structured requirement (accommodation matrix + service_lines) replaces the
@@ -83,7 +112,8 @@ interface AccRow {
   description: string; // CUSTOM only
   bedspaces: string;
 }
-/** One quantity row under a service. */
+/** One user-added quantity row under a service — picked via a rate-card
+ *  dropdown ("Customized…" included), not one row per available card. */
 interface SvcLine {
   kind: "RATE_CARD" | "CUSTOM";
   rateCardEntryId: string;
@@ -95,8 +125,12 @@ interface SvcBlock {
   serviceId: string;
   serviceName: string;
   group: number; // heading only
+  isMealArrangement: boolean;
   enabled: boolean;
-  lines: SvcLine[]; // empty ⇒ boolean toggle
+  /** The catalog's rate cards for this service — dropdown options. Empty ⇒
+   *  boolean toggle (no lines, no dropdown). */
+  rateCards: InquiryServiceRateCard[];
+  lines: SvcLine[];
 }
 /** An uploaded document's UI state: a freshly picked `file` (uploaded + attached
  *  to the draft on Step-1 Continue), and/or an already-attached `fileId`/`name`
@@ -108,6 +142,7 @@ interface PersistedDraft {
   clientTypeId: string;
   contact: Contact;
   tradeLicenseNumber: string;
+  additionalQuestions: string;
   mobilizationDate: string;
   moveOutDate: string;
   accommodation: AccommodationEntry[];
@@ -228,50 +263,88 @@ function buildAccommodation(roomTypes: RoomTypeOption[], stored?: AccommodationE
   return rows;
 }
 
-/** Build service toggles: one per catalog service. Rate cards → count lines +
- *  a CUSTOM line; none → boolean toggle. Overlays stored enabled + quantities. */
+/**
+ * Build service toggles: one per catalog service, each carrying its OWN
+ * rate-card list (dropdown options) plus whatever lines the applicant already
+ * picked (draft restore / edit prefill) or, if none were stored yet, a single
+ * blank line to start from — so a service with rate cards never opens with
+ * zero rows to fill in. Services with no rate cards stay boolean toggles
+ * (lines stays empty). Locked/dependent services (Access Card, Food Parcel)
+ * are corrected by applyServiceRules, not here.
+ */
 function buildServices(available: InquiryService[], stored?: ServiceRequirement[]): SvcBlock[] {
   const byId = new Map<string, ServiceRequirement>();
   (stored ?? []).forEach((s) => byId.set(s.serviceId, s));
-  return available.map((svc) => {
+  const blocks = available.map((svc) => {
     const st = byId.get(svc.serviceId);
-    const qtyByCard = new Map<string, number | null>();
-    let customLine: { description: string; quantity: number | null } | undefined;
-    (st?.lines ?? []).forEach((l) => {
-      if (l.kind === "CUSTOM") customLine = { description: l.description, quantity: l.quantity };
-      else if (l.rateCardEntryId) qtyByCard.set(l.rateCardEntryId, l.quantity);
-    });
-    // Only PRIMARY services (catering / laundry / cleaning) expand to per-rate-card
-    // count rows + a Customized row. ADDITIONAL services are a plain on/off
-    // selection — no rate cards, no counts (rate card + billing is chosen later on
-    // the proposal). So they carry NO lines and render as a simple toggle.
-    const isPrimary = svc.group === GROUP_PRIMARY;
-    const lines: SvcLine[] = isPrimary
-      ? svc.rateCards.map((rc) => ({
-          kind: "RATE_CARD" as const,
-          rateCardEntryId: rc.id,
-          rateCardName: rc.name,
-          description: "",
-          quantity: qtyByCard.get(rc.id) != null ? String(qtyByCard.get(rc.id)) : "",
-        }))
-      : [];
-    if (svc.rateCards.length && isPrimary) {
-      lines.push({
-        kind: "CUSTOM",
-        rateCardEntryId: "",
-        rateCardName: "",
-        description: customLine?.description ?? "",
-        quantity: customLine?.quantity != null ? String(customLine.quantity) : "",
-      });
-    }
+    const storedLines: SvcLine[] = (st?.lines ?? []).map((l) => ({
+      kind: l.kind,
+      rateCardEntryId: l.rateCardEntryId,
+      rateCardName: l.rateCardName,
+      description: l.description,
+      quantity: l.quantity != null ? String(l.quantity) : "",
+    }));
+    const enabled = st?.enabled ?? false;
+    const lines =
+      storedLines.length > 0 || svc.rateCards.length === 0 || !enabled
+        ? storedLines
+        : [{ kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }];
     return {
       serviceId: svc.serviceId,
       serviceName: svc.serviceName,
       group: svc.group,
-      enabled: st?.enabled ?? false,
+      isMealArrangement: Boolean(svc.isMealArrangement),
+      enabled,
+      rateCards: svc.rateCards,
       lines,
     };
   });
+  return applyServiceRules(blocks);
+}
+
+/**
+ * Access Card is always on for every resident (locked — see isAccessCardService);
+ * Food Parcel needs Catering on first (see isFoodParcelService/
+ * isCateringService) — corrects both on every load (draft restore, edit
+ * prefill, or a fresh catalog fetch) so a record saved before these rules
+ * existed still comes out right, not just going forward.
+ */
+function applyServiceRules(blocks: SvcBlock[]): SvcBlock[] {
+  const cateringOn = blocks.some((b) => b.enabled && isCateringService(b.serviceName));
+  return blocks.map((b) => {
+    if (isAccessCardService(b.serviceName)) return { ...b, enabled: true };
+    if (isFoodParcelService(b.serviceName) && !cateringOn) return { ...b, enabled: false };
+    return b;
+  });
+}
+
+/** The rate card flagged as this service's default price, if any. */
+function defaultCardOf(b: SvcBlock): InquiryServiceRateCard | undefined {
+  return b.rateCards.find((rc) => rc.isDefault);
+}
+
+/**
+ * Applicant left a rate card unpicked on an enabled, quantified line? Fill in
+ * the service's default price card so the inquiry can still be submitted —
+ * the caller then confirms this with the applicant before actually
+ * submitting (see the wizard's submit()/confirmDefaultAndSubmit()).
+ */
+function withDefaultRateCards(blocks: SvcBlock[]): { blocks: SvcBlock[]; appliedAny: boolean } {
+  let appliedAny = false;
+  const out = blocks.map((b) => {
+    if (!b.enabled || b.rateCards.length === 0) return b;
+    const def = defaultCardOf(b);
+    if (!def) return b;
+    const lines = b.lines.map((l) => {
+      if (l.kind === "RATE_CARD" && !l.rateCardEntryId && num(l.quantity) > 0) {
+        appliedAny = true;
+        return { ...l, rateCardEntryId: def.id, rateCardName: def.name };
+      }
+      return l;
+    });
+    return { ...b, lines };
+  });
+  return { blocks: out, appliedAny };
 }
 
 /** Matrix rows → storable entries (bedspaces > 0 only). */
@@ -326,6 +399,7 @@ export function InquiryWizard() {
     saved.contact ?? { fullName: "", company: "", mobile: "", email: "" }
   );
   const [tradeLicenseNumber, setTradeLicenseNumber] = useState(saved.tradeLicenseNumber ?? "");
+  const [additionalQuestions, setAdditionalQuestions] = useState(saved.additionalQuestions ?? "");
   const [mobilizationDate, setMobilizationDate] = useState(saved.mobilizationDate ?? "");
   const [moveOutDate, setMoveOutDate] = useState(saved.moveOutDate ?? "");
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>(saved.answers ?? {});
@@ -356,6 +430,9 @@ export function InquiryWizard() {
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [submittedCode, setSubmittedCode] = useState<string | null>(null);
+  // Shown at submit when a service was left without a rate card picked — see
+  // withDefaultRateCards()/submit()/confirmDefaultAndSubmit().
+  const [showDefaultConfirm, setShowDefaultConfirm] = useState(false);
 
   const [template, setTemplate] = useState<Template | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
@@ -472,6 +549,7 @@ export function InquiryWizard() {
           email: d.contact.email,
         });
         setTradeLicenseNumber(d.trade_license_number ?? "");
+        setAdditionalQuestions(d.additional_questions ?? "");
         setMobilizationDate(d.requirement.moveIn);
         setMoveOutDate(d.requirement.moveOut);
         setStoredReq({ acc: d.accommodation ?? [], svc: d.services ?? [] });
@@ -498,6 +576,7 @@ export function InquiryWizard() {
       clientTypeId,
       contact,
       tradeLicenseNumber,
+      additionalQuestions,
       mobilizationDate,
       moveOutDate,
       accommodation: accToEntries(accRows),
@@ -511,6 +590,7 @@ export function InquiryWizard() {
     clientTypeId,
     contact,
     tradeLicenseNumber,
+    additionalQuestions,
     mobilizationDate,
     moveOutDate,
     accRows,
@@ -531,8 +611,11 @@ export function InquiryWizard() {
     if (s === 0) {
       if (!contact.fullName.trim()) e.fullName = t("err.required");
       if (!contact.mobile.trim()) e.mobile = t("err.required");
+      else if (!isValidMobile(contact.mobile)) e.mobile = t("err.mobile");
       if (!contact.email.trim()) e.email = t("err.required");
       else if (!EMAIL_RE.test(contact.email.trim())) e.email = t("err.email");
+      if (!tradeLicenseNumber.trim()) e.tradeLicenseNo = t("err.tradeLicenseNo");
+      if (!tradeDoc.file && tradeDoc.fileId == null) e.tradeDoc = t("err.tradeDoc");
     }
     if (s === 1) {
       if (totalBedspaces <= 0) e.accommodation = t("err.bedspaces");
@@ -627,7 +710,25 @@ export function InquiryWizard() {
     window.scrollTo({ top: 0 });
   }
 
-  async function submit() {
+  // Applicant left a service's rate card unpicked? Fill in the default price
+  // card, ask them to confirm, THEN actually submit — rather than silently
+  // substituting it or blocking submission outright.
+  function submit() {
+    const { blocks, appliedAny } = withDefaultRateCards(svcBlocks);
+    if (appliedAny) {
+      setSvcBlocks(blocks);
+      setShowDefaultConfirm(true);
+      return;
+    }
+    void doSubmit(svcBlocks);
+  }
+
+  function confirmDefaultAndSubmit() {
+    setShowDefaultConfirm(false);
+    void doSubmit(svcBlocks);
+  }
+
+  async function doSubmit(blocksForSubmit: SvcBlock[]) {
     // Both are set earlier in the flow (inquiryId by the Step-1 create, template
     // by the client-type effect). If either is missing the click would otherwise
     // do nothing at all — say so instead of dead-ending on a silent return.
@@ -669,8 +770,9 @@ export function InquiryWizard() {
             duration_months: durationMonths,
           },
           accommodation: accToEntries(accRows),
-          services: svcToRequirements(svcBlocks),
+          services: svcToRequirements(blocksForSubmit),
           trade_license_number: tradeLicenseNumber.trim(),
+          additional_questions: additionalQuestions.trim(),
           vat_certificate_file_id: vatFileId,
           trade_license_file_id: tradeFileId,
           company: contact.company.trim(),
@@ -691,12 +793,12 @@ export function InquiryWizard() {
 
   const timeLeft = useMemo(() => Math.max(1, 3 - step), [step]);
 
-  // Documents are optional, but on the Review step we warn (not block) when one
-  // hasn't been attached — a doc is "missing" when nothing is picked and no file
-  // is already on record. Lets the client submit knowingly or go back to add it.
+  // The VAT certificate is optional — on the Review step we warn (not block)
+  // when it hasn't been attached, so the client can submit knowingly or go
+  // back to add it. Trade license is now mandatory (blocked at Step 1 by
+  // validate()), so it can never reach Review missing.
   const missingDocLabels = [
     !vatDoc.file && vatDoc.fileId == null ? t("f.vat") : null,
-    !tradeDoc.file && tradeDoc.fileId == null ? t("f.tradeLicense") : null,
   ].filter(Boolean) as string[];
 
   // A summary of the current step's validation errors, shown next to Continue so
@@ -705,6 +807,7 @@ export function InquiryWizard() {
   // dynamic questions) already name their subject, so they show as-is.
   const ERROR_FIELD_LABELS: Record<string, string> = {
     fullName: "f.fullName", mobile: "f.mobile", email: "f.email",
+    tradeLicenseNo: "f.tradeLicenseNo", tradeDoc: "f.tradeLicense",
     mobilization: "f.mobilization", moveOut: "f.moveOut",
   };
   const errorSummary = Object.entries(errors)
@@ -753,6 +856,8 @@ export function InquiryWizard() {
               setContact={setContact}
               tradeLicenseNumber={tradeLicenseNumber}
               setTradeLicenseNumber={setTradeLicenseNumber}
+              additionalQuestions={additionalQuestions}
+              setAdditionalQuestions={setAdditionalQuestions}
               vatDoc={vatDoc}
               setVatDoc={setVatDoc}
               tradeDoc={tradeDoc}
@@ -795,6 +900,7 @@ export function InquiryWizard() {
               whoLabel={clientTypeOptions.find((o) => o.value === clientTypeId)?.label ?? ""}
               contact={contact}
               tradeLicenseNumber={tradeLicenseNumber}
+              additionalQuestions={additionalQuestions}
               vatDoc={vatDoc}
               tradeDoc={tradeDoc}
               accRows={accRows}
@@ -886,6 +992,32 @@ export function InquiryWizard() {
           )}
         </div>
       </Card>
+
+      {showDefaultConfirm && (
+        <DefaultRateCardDialog
+          onCancel={() => setShowDefaultConfirm(false)}
+          onConfirm={confirmDefaultAndSubmit}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Confirms the standard rate card was auto-applied before actually submitting. */
+function DefaultRateCardDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  const { t } = useLang();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <Card className="w-full max-w-md p-6">
+        <h2 className="text-lg font-bold text-ink">{t("dlg.defaultRateCard.title")}</h2>
+        <p className="mt-2 text-sm text-muted">{t("dlg.defaultRateCard.body")}</p>
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <Button variant="ghost" onClick={onCancel}>
+            {t("dlg.cancel")}
+          </Button>
+          <Button onClick={onConfirm}>{t("dlg.ok")}</Button>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -908,6 +1040,8 @@ function StepContact({
   setContact,
   tradeLicenseNumber,
   setTradeLicenseNumber,
+  additionalQuestions,
+  setAdditionalQuestions,
   vatDoc,
   setVatDoc,
   tradeDoc,
@@ -923,6 +1057,8 @@ function StepContact({
   setContact: (fn: (c: Contact) => Contact) => void;
   tradeLicenseNumber: string;
   setTradeLicenseNumber: (v: string) => void;
+  additionalQuestions: string;
+  setAdditionalQuestions: (v: string) => void;
   vatDoc: DocState;
   setVatDoc: (d: DocState) => void;
   tradeDoc: DocState;
@@ -974,12 +1110,16 @@ function StepContact({
             disabled={locked}
           />
         </Field>
-        <Field label={t("f.tradeLicenseNo")} htmlFor="tradeLicenseNo">
+        <Field label={t("f.tradeLicenseNo")} required error={errors.tradeLicenseNo} htmlFor="tradeLicenseNo">
           <Input
             id="tradeLicenseNo"
             value={tradeLicenseNumber}
-            onChange={(e) => setTradeLicenseNumber(e.target.value)}
+            onChange={(e) => {
+              clearError("tradeLicenseNo");
+              setTradeLicenseNumber(e.target.value);
+            }}
             placeholder={t("f.tradeLicenseNo.ph")}
+            invalid={!!errors.tradeLicenseNo}
             disabled={locked}
           />
         </Field>
@@ -1018,7 +1158,7 @@ function StepContact({
         </Field>
       </div>
 
-      {/* Documents — VAT certificate + trade license uploads (optional) */}
+      {/* Documents — VAT certificate (optional) + trade license (required) */}
       <div>
         <div className="mb-2 flex flex-wrap items-baseline gap-x-2.5">
           <span className="text-sm font-medium text-ink-soft">{t("f.docs")}</span>
@@ -1033,12 +1173,33 @@ function StepContact({
           />
           <DocField
             label={t("f.tradeLicense")}
+            required
+            error={errors.tradeDoc}
             doc={tradeDoc}
-            onPick={(f) => setTradeDoc({ file: f, name: f.name })}
+            onPick={(f) => {
+              clearError("tradeDoc");
+              setTradeDoc({ file: f, name: f.name });
+            }}
             onRemove={() => setTradeDoc({})}
           />
         </div>
       </div>
+
+      <Field
+        label={t("f.additionalQuestions")}
+        hint={t("f.additionalQuestions.hint")}
+        htmlFor="additionalQuestions"
+      >
+        <textarea
+          id="additionalQuestions"
+          rows={3}
+          className={cn(inputClass, "h-auto resize-y border-line py-2.5 leading-relaxed")}
+          value={additionalQuestions}
+          onChange={(e) => setAdditionalQuestions(e.target.value)}
+          placeholder={t("f.additionalQuestions.ph")}
+          disabled={locked}
+        />
+      </Field>
     </div>
   );
 }
@@ -1049,17 +1210,21 @@ function DocField({
   doc,
   onPick,
   onRemove,
+  required,
+  error,
 }: {
   label: string;
   doc: DocState;
   onPick: (f: File) => void;
   onRemove: () => void;
+  required?: boolean;
+  error?: string;
 }) {
   const { t } = useLang();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const has = !!(doc.file || doc.name || doc.fileId != null);
   return (
-    <Field label={label}>
+    <Field label={label} required={required} error={error}>
       <input
         ref={inputRef}
         type="file"
@@ -1146,9 +1311,24 @@ function StepRequirement({
     clearError("accommodation");
     setAccRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
+  // Access Card is always on — the checkbox is locked, toggling is a no-op.
   const toggleSvc = (i: number) => {
     clearError("services");
-    setSvcBlocks((bs) => bs.map((b, idx) => (idx === i ? { ...b, enabled: !b.enabled } : b)));
+    setSvcBlocks((bs) =>
+      applyServiceRules(
+        bs.map((b, idx) => {
+          if (idx !== i || isAccessCardService(b.serviceName)) return b;
+          const enabled = !b.enabled;
+          // Turning a rate-card service on for the first time starts it with
+          // one blank line to pick, rather than opening with nothing to fill.
+          const lines =
+            enabled && b.rateCards.length > 0 && b.lines.length === 0
+              ? [{ kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }]
+              : b.lines;
+          return { ...b, enabled, lines };
+        })
+      )
+    );
   };
   const patchSvcLine = (si: number, li: number, patch: Partial<SvcLine>) => {
     clearError("services");
@@ -1158,9 +1338,47 @@ function StepRequirement({
       )
     );
   };
+  const addSvcLine = (si: number) => {
+    clearError("services");
+    setSvcBlocks((bs) =>
+      bs.map((b, idx) =>
+        idx === si
+          ? { ...b, lines: [...b.lines, { kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }] }
+          : b
+      )
+    );
+  };
+  const removeSvcLine = (si: number, li: number) => {
+    clearError("services");
+    setSvcBlocks((bs) => bs.map((b, idx) => (idx === si ? { ...b, lines: b.lines.filter((_, j) => j !== li) } : b)));
+  };
+  /** Dropdown pick → the matching catalog card, or the "Customized…" sentinel. */
+  const pickSvcCard = (si: number, li: number, value: string) => {
+    clearError("services");
+    setSvcBlocks((bs) =>
+      bs.map((b, idx) => {
+        if (idx !== si) return b;
+        if (value === CUSTOM_OPT) {
+          return {
+            ...b,
+            lines: b.lines.map((l, j) => (j === li ? { ...l, kind: "CUSTOM", rateCardEntryId: "", rateCardName: "" } : l)),
+          };
+        }
+        const card = b.rateCards.find((rc) => rc.id === value);
+        return {
+          ...b,
+          lines: b.lines.map((l, j) =>
+            j === li ? { ...l, kind: "RATE_CARD", rateCardEntryId: value, rateCardName: card?.name ?? "" } : l
+          ),
+        };
+      })
+    );
+  };
 
-  const primary = svcBlocks.filter((b) => b.group === GROUP_PRIMARY);
-  const additional = svcBlocks.filter((b) => b.group === GROUP_ADDITIONAL);
+  const cateringOn = svcBlocks.some((b) => b.enabled && isCateringService(b.serviceName));
+  const meal = svcBlocks.filter((b) => b.isMealArrangement);
+  const primary = svcBlocks.filter((b) => b.group === GROUP_PRIMARY && !b.isMealArrangement);
+  const additional = svcBlocks.filter((b) => b.group === GROUP_ADDITIONAL && !b.isMealArrangement);
 
   return (
     <div className="space-y-6">
@@ -1269,6 +1487,7 @@ function StepRequirement({
             {(
               [
                 { label: t("f.services.primary"), list: primary },
+                { label: t("f.services.meal"), list: meal },
                 { label: t("f.services.additional"), list: additional },
               ] as const
             ).map(({ label, list }) =>
@@ -1280,12 +1499,15 @@ function StepRequirement({
                   <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
                     {list.map((b) => {
                       const si = svcBlocks.indexOf(b);
-                      const staff = b.lines.reduce((n, l) => n + num(l.quantity), 0);
+                      const pax = b.lines.reduce((n, l) => n + num(l.quantity), 0);
+                      const locked = isAccessCardService(b.serviceName);
+                      const parcelBlocked = isFoodParcelService(b.serviceName) && !cateringOn;
                       return (
                         <div key={b.serviceId}>
                           <label
                             className={cn(
-                              "flex cursor-pointer items-center gap-3 px-4 py-3",
+                              "flex items-center gap-3 px-4 py-3",
+                              parcelBlocked ? "cursor-not-allowed opacity-60" : "cursor-pointer",
                               b.enabled && "bg-primary-soft/40"
                             )}
                           >
@@ -1293,54 +1515,92 @@ function StepRequirement({
                               type="checkbox"
                               checked={b.enabled}
                               onChange={() => toggleSvc(si)}
-                              className="h-4 w-4 rounded border-line text-primary focus:ring-primary"
+                              disabled={locked || parcelBlocked}
+                              className="h-4 w-4 rounded border-line text-primary focus:ring-primary disabled:cursor-not-allowed"
                             />
                             <span className="text-sm font-semibold text-ink">{b.serviceName}</span>
+                            {locked && (
+                              <span className="text-xs font-medium text-muted">{t("f.services.allPax")}</span>
+                            )}
                             {b.enabled && b.lines.length > 0 && (
                               <span className="ms-auto text-xs font-medium text-muted">
-                                {t("f.services.staff", { n: staff })}
+                                {t("f.services.staff", { n: pax })}
                               </span>
                             )}
-                            {b.enabled && b.lines.length === 0 && (
+                            {b.enabled && b.lines.length === 0 && !locked && (
                               <span className="ms-auto text-xs font-medium text-primary">
                                 {t("f.services.included")}
                               </span>
                             )}
+                            {locked && (
+                              <span className="ms-auto flex items-center gap-1 text-xs font-medium text-primary">
+                                <Lock className="h-3.5 w-3.5" /> {t("f.services.alwaysIncluded")}
+                              </span>
+                            )}
                           </label>
-                          {b.enabled && b.lines.length > 0 && (
+                          {parcelBlocked && (
+                            <p className="border-t border-line bg-canvas px-4 py-2 text-xs text-muted">
+                              {t("f.services.foodParcelNeedsCatering")}
+                            </p>
+                          )}
+                          {b.enabled && b.rateCards.length > 0 && (
                             <div className="border-t border-line bg-canvas px-4 py-3">
-                              <div className="mb-2 grid grid-cols-[1fr_110px] gap-3 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                                <span>{t("f.services.option")}</span>
-                                <span className="text-end">{t("f.services.numStaff")}</span>
+                              <div className="mb-2 flex items-center justify-between">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                                  {t("f.services.option")} · {t("f.services.numStaff")}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => addSvcLine(si)}
+                                  className="text-xs font-semibold text-primary hover:underline"
+                                >
+                                  {t("f.services.addLine")}
+                                </button>
                               </div>
                               <div className="space-y-2">
                                 {b.lines.map((l, li) => (
-                                  <div
-                                    key={l.kind === "CUSTOM" ? "custom" : l.rateCardEntryId}
-                                    className="grid grid-cols-[1fr_110px] items-center gap-3"
-                                  >
-                                    {l.kind === "CUSTOM" ? (
+                                  <div key={li} className="space-y-1.5">
+                                    <div className="grid grid-cols-[1fr_110px_auto] items-center gap-3">
+                                      <Select
+                                        value={l.kind === "CUSTOM" ? CUSTOM_OPT : l.rateCardEntryId}
+                                        onChange={(e) => pickSvcCard(si, li, e.target.value)}
+                                        className="h-9"
+                                      >
+                                        <option value="" disabled>
+                                          {t("f.services.rateCard.select")}
+                                        </option>
+                                        {b.rateCards.map((rc) => (
+                                          <option key={rc.id} value={rc.id}>
+                                            {rc.name}
+                                          </option>
+                                        ))}
+                                        <option value={CUSTOM_OPT}>{t("f.services.rateCard.custom")}</option>
+                                      </Select>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        placeholder="0"
+                                        className="h-9 text-end"
+                                        value={l.quantity}
+                                        onChange={(e) => patchSvcLine(si, li, { quantity: e.target.value })}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => removeSvcLine(si, li)}
+                                        aria-label={`${t("f.doc.remove")} ${b.serviceName}`}
+                                        className="rounded-md p-1.5 text-muted hover:text-red-600"
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                    {l.kind === "CUSTOM" && (
                                       <Input
                                         className="h-9"
                                         placeholder={t("f.services.custom.explain")}
                                         value={l.description}
-                                        onChange={(e) =>
-                                          patchSvcLine(si, li, { description: e.target.value })
-                                        }
+                                        onChange={(e) => patchSvcLine(si, li, { description: e.target.value })}
                                       />
-                                    ) : (
-                                      <span className="text-sm text-ink-soft">{l.rateCardName}</span>
                                     )}
-                                    <Input
-                                      type="number"
-                                      min={0}
-                                      placeholder="0"
-                                      className="h-9 text-end"
-                                      value={l.quantity}
-                                      onChange={(e) =>
-                                        patchSvcLine(si, li, { quantity: e.target.value })
-                                      }
-                                    />
                                   </div>
                                 ))}
                               </div>
@@ -1417,6 +1677,7 @@ function StepReview({
   whoLabel,
   contact,
   tradeLicenseNumber,
+  additionalQuestions,
   vatDoc,
   tradeDoc,
   accRows,
@@ -1433,6 +1694,7 @@ function StepReview({
   whoLabel: string;
   contact: Contact;
   tradeLicenseNumber: string;
+  additionalQuestions: string;
   vatDoc: DocState;
   tradeDoc: DocState;
   accRows: AccRow[];
@@ -1473,6 +1735,7 @@ function StepReview({
         <Row label={t("f.email")} value={contact.email || dash} />
         <Row label={t("f.vat")} value={vatDoc.name || vatDoc.file?.name || dash} />
         <Row label={t("f.tradeLicense")} value={tradeDoc.name || tradeDoc.file?.name || dash} />
+        <Row label={t("f.additionalQuestions")} value={additionalQuestions.trim() || dash} />
       </ReviewSection>
 
       <ReviewSection title={t("rev.section.requirement")} onEdit={() => goto(1)}>

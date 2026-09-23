@@ -107,15 +107,21 @@ export interface ServiceOption {
 export interface InquiryServiceRateCard {
   id: string;
   name: string;
+  /** is_default_price_custom_ratecard — the fallback card applied at submit
+   *  when the applicant leaves this service's rate card unpicked. */
+  isDefault?: boolean;
 }
 
 /** A service available on the inquiry — mirrors the console's InquiryService.
- *  `rateCards` empty ⇒ boolean toggle; non-empty ⇒ per-card count rows.
- *  `group` is the catalog group (2 Primary / 3 Additional) — heading only. */
+ *  `rateCards` empty ⇒ boolean toggle; non-empty ⇒ a user-picked rate card per
+ *  quantity row. `group` is the catalog group (2 Primary / 3 Additional) —
+ *  heading only, EXCEPT that meal-arrangement services (still group 2) get
+ *  their own "Meal Arrangement" heading via `isMealArrangement`. */
 export interface InquiryService {
   serviceId: string;
   serviceName: string;
   group: number;
+  isMealArrangement?: boolean;
   rateCards: InquiryServiceRateCard[];
 }
 
@@ -174,6 +180,8 @@ export interface SubmitInquiryInput {
   /** Carried so the gateway can recompute the auto `name` title with the bed total. */
   company: string;
   contact_name: string;
+  /** Free-text queries the applicant raised — optional. */
+  additional_questions: string;
 }
 
 export interface SubmitInquiryResult {
@@ -272,6 +280,8 @@ export interface InquiryEditData {
   };
   /** Trade licence number (text). */
   trade_license_number: string;
+  /** Free-text queries the applicant raised — optional. */
+  additional_questions: string;
   requirement: {
     moveIn: string; // YYYY-MM-DD — Date of Mobilization
     moveOut: string; // YYYY-MM-DD

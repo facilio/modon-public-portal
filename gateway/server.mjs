@@ -30,6 +30,10 @@ const ROOMTYPE_MODULE = process.env.FACILIO_ROOMTYPE_MODULE ?? "custom_roomtype"
 // Mirrors the console's fetchRoomTypeOptions.
 const ROOMTYPE_OCCUPANCY_FIELD = "occupancy__persons_room__custom_roomtype";
 const ROOMTYPE_BEDS_FIELD = "number_of_beds_custom_roomtype";
+// Only room types flagged for the public portal are offered here — a room type
+// can exist for internal use (check-in, contracts) without being leasable via
+// the public form.
+const ROOMTYPE_PUBLIC_FIELD = "show_in_public_portal_custom_roomtype";
 // Landing-page catalogs: services master + clusters (a "cluster" is the system
 // zone module; building count comes from building records' cluster lookup).
 const SERVICES_MODULE = process.env.FACILIO_SERVICES_MODULE ?? "custom_services_1";
@@ -38,10 +42,17 @@ const SERVICES_MODULE = process.env.FACILIO_SERVICES_MODULE ?? "custom_services_
 const SERVICE_GROUP_FIELD = "type_custom_services_1";
 const SERVICE_GROUP_PRIMARY = 2;
 const SERVICE_GROUP_ADDITIONAL = 3;
+// Meal-arrangement services (Catering / Mess Hall / Self Cooking) get their own
+// heading on the Requirement step instead of sitting under Primary — same flag
+// the console's services catalog reads.
+const SERVICE_MEAL_ARRANGEMENT_FIELD = "is_meal_arrangement_group_custom_services_1";
 // Rate cards — offered as count rows under a service (mirrors the console form).
 const RATECARD_MODULE = process.env.FACILIO_RATECARD_MODULE ?? "custom_ratecard";
 const RATECARD_TYPE_FIELD = "card_type_custom_ratecard_1"; // lookup → custom_services_1
 const RATECARD_ACTIVE_STATE = Number(process.env.FACILIO_RATECARD_ACTIVE_STATE ?? 162121);
+// The rate card to fall back to when the applicant leaves a service's rate card
+// unpicked at submit — same flag the console's default-price toggle reads.
+const RATECARD_DEFAULT_PRICE_FIELD = "is_default_price_custom_ratecard";
 // Facilio file-upload endpoint (API-key REST). VERIFIED against the live host
 // (2026-08-05): POST /api/v3/files with the multipart part named `files` (plural)
 // → 200 { code:0, data:{ attachments:{ "<filename>": <fileId> } } }. The singular
@@ -80,6 +91,7 @@ const IF = {
   email: "email_custom_inquiries",
   company: "company_name_custom_inquiries",
   tradeLicenseNumber: "trade_license_number_custom_inquiries", // TEXT
+  additionalQuestions: "additional_questions_custom_inquiries", // MULTI-LINE TEXT
   // Uploaded documents — FILE fields, written as `<field>Id`.
   vatCertificate: "vat_certificate_custom_inquiries",
   tradeLicense: "trade_license_custom_inquiries",
@@ -368,7 +380,7 @@ async function getRoomTypes() {
   );
   if (status >= 400) return { status, body };
   const opts = unwrapList(body, ROOMTYPE_MODULE)
-    .filter((r) => r?.id != null)
+    .filter((r) => r?.id != null && r[ROOMTYPE_PUBLIC_FIELD] === true)
     .map((r) => {
       const beds =
         Number(r[ROOMTYPE_OCCUPANCY_FIELD]) || Number(r[ROOMTYPE_BEDS_FIELD]) || null;
@@ -421,6 +433,7 @@ async function getInquiryServices() {
         id: String(r.id),
         name: String(r.name ?? r.id),
         group: Number(refId(r[SERVICE_GROUP_FIELD])) || 0,
+        isMealArrangement: r[SERVICE_MEAL_ARRANGEMENT_FIELD] === true,
       }))
       .filter((s) => s.group === SERVICE_GROUP_PRIMARY || s.group === SERVICE_GROUP_ADDITIONAL);
 
@@ -437,7 +450,11 @@ async function getInquiryServices() {
         if (svcId == null) continue;
         const key = String(svcId);
         const list = cardsByService.get(key) ?? [];
-        list.push({ id: String(r.id), name: String(r.name ?? r.id) });
+        list.push({
+          id: String(r.id),
+          name: String(r.name ?? r.id),
+          isDefault: r[RATECARD_DEFAULT_PRICE_FIELD] === true,
+        });
         cardsByService.set(key, list);
       }
     }
@@ -446,6 +463,7 @@ async function getInquiryServices() {
       serviceId: c.id,
       serviceName: c.name,
       group: c.group,
+      isMealArrangement: c.isMealArrangement,
       rateCards: cardsByService.get(c.id) ?? [],
     }));
     return { status: 200, body: out };
@@ -676,6 +694,7 @@ async function submitInquiry(inquiryId, input) {
   if (input?.trade_license_number) data[IF.tradeLicenseNumber] = String(input.trade_license_number);
   if (input?.vat_certificate_file_id != null) data[`${IF.vatCertificate}Id`] = Number(input.vat_certificate_file_id);
   if (input?.trade_license_file_id != null) data[`${IF.tradeLicense}Id`] = Number(input.trade_license_file_id);
+  if (input?.additional_questions) data[IF.additionalQuestions] = String(input.additional_questions);
 
   // Dynamic questionnaire.
   const templateId = Number(input?.template_id);
@@ -995,6 +1014,7 @@ function mapInquiryForEdit(rec, status, editable) {
       email: rec[IF.email] || "",
     },
     trade_license_number: rec[IF.tradeLicenseNumber] || "",
+    additional_questions: rec[IF.additionalQuestions] || "",
     requirement: {
       moveIn: moveInMs ? new Date(moveInMs).toISOString().slice(0, 10) : "",
       moveOut: moveOutMs ? new Date(moveOutMs).toISOString().slice(0, 10) : "",
