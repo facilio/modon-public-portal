@@ -258,8 +258,11 @@ const en = {
   "f.services.addLine": "+ Add",
   "f.services.alwaysIncluded": "Always included",
   "f.services.allPax": "All pax",
+  "f.services.mandatory": "Mandatory",
   "f.services.foodParcelNeedsCatering":
     "Food Parcel is prepared by the catering operation — turn on Catering to make it available.",
+  "f.services.messHallMandatoryNote":
+    "Mess Hall is required whenever Catering isn't selected.",
   "f.budget": "Budget per bed / month",
   "f.budget.any": "No preference",
   "f.urgency": "How soon do you need this?",
@@ -372,7 +375,7 @@ const en = {
   "err.moveOutAfter": "Move-out must be after the check-in date.",
   "err.serviceCount": "Enter a count for at least one {s} option, or turn it off.",
   "err.serviceCustom": "Describe the customized {s} option.",
-  "err.serviceExceeds": "{s} can’t cover more than the total bedspaces.",
+  "err.serviceMismatch": "{s}'s count must add up to exactly the total bedspaces ({n}).",
   "err.genderSum": "Male + Female must add up to the number of beds ({n}).",
   "err.generic": "Something went wrong. Please try again.",
 
@@ -620,8 +623,11 @@ const ar: Record<StringKey, string> = {
   "f.services.addLine": "+ إضافة",
   "f.services.alwaysIncluded": "مشمولة دائماً",
   "f.services.allPax": "لجميع الأشخاص",
+  "f.services.mandatory": "إلزامي",
   "f.services.foodParcelNeedsCatering":
     "طرد الطعام يُحضَّر ضمن عملية التموين — فعّل التموين لإتاحته.",
+  "f.services.messHallMandatoryNote":
+    "الصالة المشتركة إلزامية عند عدم اختيار التموين.",
   "f.budget": "الميزانية لكل سرير / شهر",
   "f.budget.any": "لا تفضيل",
   "f.urgency": "ما مدى سرعة احتياجك؟",
@@ -724,7 +730,7 @@ const ar: Record<StringKey, string> = {
   "err.moveOutAfter": "يجب أن يكون تاريخ المغادرة بعد تاريخ الدخول.",
   "err.serviceCount": "أدخل عدداً لخيار {s} واحد على الأقل، أو أوقف الخدمة.",
   "err.serviceCustom": "صف خيار {s} المخصّص.",
-  "err.serviceExceeds": "لا يمكن أن يتجاوز {s} إجمالي الأسرّة.",
+  "err.serviceMismatch": "يجب أن يساوي عدد {s} إجمالي الأسرّة ({n}) بالضبط.",
   "err.genderSum": "يجب أن يساوي مجموع الذكور والإناث عدد الأسرّة ({n}).",
   "err.generic": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
 

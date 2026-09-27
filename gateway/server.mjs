@@ -53,6 +53,10 @@ const RATECARD_ACTIVE_STATE = Number(process.env.FACILIO_RATECARD_ACTIVE_STATE ?
 // The rate card to fall back to when the applicant leaves a service's rate card
 // unpicked at submit — same flag the console's default-price toggle reads.
 const RATECARD_DEFAULT_PRICE_FIELD = "is_default_price_custom_ratecard";
+// Only rate cards flagged for the public portal are offered here — same
+// intent as ROOMTYPE_PUBLIC_FIELD: a rate card can exist for internal/console
+// use without being quotable via the public form.
+const RATECARD_PUBLIC_FIELD = "show_in_public_portal_custom_ratecard";
 // Facilio file-upload endpoint (API-key REST). VERIFIED against the live host
 // (2026-08-05): POST /api/v3/files with the multipart part named `files` (plural)
 // → 200 { code:0, data:{ attachments:{ "<filename>": <fileId> } } }. The singular
@@ -446,6 +450,7 @@ async function getInquiryServices() {
     if (rStatus < 400) {
       for (const r of unwrapList(rBody, RATECARD_MODULE)) {
         if (Number(refId(r.moduleState)) !== RATECARD_ACTIVE_STATE) continue;
+        if (r[RATECARD_PUBLIC_FIELD] !== true) continue;
         const svcId = refId(r[RATECARD_TYPE_FIELD]);
         if (svcId == null) continue;
         const key = String(svcId);

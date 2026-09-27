@@ -75,9 +75,10 @@ const GROUP_ADDITIONAL = 3;
 /** Sentinel value picked in a rate-card dropdown for a freeform/CUSTOM line. */
 const CUSTOM_OPT = "__custom__";
 
-// ── Service name rules (Food Parcel ⇢ needs Catering; Access Card ⇢ always
-// on) — name-matching rather than an id, since the catalog id isn't stable
-// across environments. Mirrors the console's shared serviceRules.ts. ──────────
+// ── Service name rules (Food Parcel ⇢ needs Catering; Mess Hall ⇢ mandatory
+// without Catering; Access Card ⇢ always on) — name-matching rather than an
+// id, since the catalog id isn't stable across environments. Mirrors the
+// console's shared serviceRules.ts. ──────────
 function namesMatch(name: string, target: string): boolean {
   return name.trim().toLowerCase() === target;
 }
@@ -86,6 +87,9 @@ function isCateringService(name: string): boolean {
 }
 function isFoodParcelService(name: string): boolean {
   return namesMatch(name, "food parcel");
+}
+function isMessHallService(name: string): boolean {
+  return namesMatch(name, "mess hall");
 }
 function isAccessCardService(name: string): boolean {
   return namesMatch(name, "access card");
@@ -331,6 +335,9 @@ function applyServiceRules(blocks: SvcBlock[]): SvcBlock[] {
   return blocks.map((b) => {
     if (isAccessCardService(b.serviceName)) return { ...b, enabled: true };
     if (isFoodParcelService(b.serviceName) && !cateringOn) return { ...b, enabled: false };
+    // Mess Hall is the fallback meal arrangement when Catering isn't chosen —
+    // mandatory (locked on) in that case, optional once Catering is on.
+    if (isMessHallService(b.serviceName) && !cateringOn) return { ...b, enabled: true };
     return b;
   });
 }
@@ -342,9 +349,9 @@ function defaultCardOf(b: SvcBlock): InquiryServiceRateCard | undefined {
 
 /**
  * Applicant left a rate card unpicked on an enabled, quantified line? Fill in
- * the service's default price card so the inquiry can still be submitted —
- * the caller then confirms this with the applicant before actually
- * submitting (see the wizard's submit()/confirmDefaultAndSubmit()).
+ * the service's default price card so the inquiry can proceed — the caller
+ * then confirms this with the applicant before actually advancing/submitting
+ * (see the wizard's next()/submit()/confirmDefaultAndProceed()).
  */
 function withDefaultRateCards(blocks: SvcBlock[]): { blocks: SvcBlock[]; appliedAny: boolean } {
   let appliedAny = false;
@@ -447,9 +454,11 @@ export function InquiryWizard() {
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [submittedCode, setSubmittedCode] = useState<string | null>(null);
-  // Shown at submit when a service was left without a rate card picked — see
-  // withDefaultRateCards()/submit()/confirmDefaultAndSubmit().
+  // Shown when leaving the Requirement step OR at final submit, whichever
+  // comes first, if a service was left without a rate card picked — see
+  // withDefaultRateCards()/next()/submit()/confirmDefaultAndProceed().
   const [showDefaultConfirm, setShowDefaultConfirm] = useState(false);
+  const [pendingDefaultAction, setPendingDefaultAction] = useState<"advance" | "submit" | null>(null);
 
   const [template, setTemplate] = useState<Template | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
@@ -642,7 +651,8 @@ export function InquiryWizard() {
       if (!moveOutDate) e.moveOut = t("err.required");
       else if (durationDaysVal < 1) e.moveOut = t("err.moveOutAfter");
       // Services — each enabled quantity service needs ≥1 count, custom needs a
-      // description, and no service may exceed the total bedspaces.
+      // description, and its lines must add up to EXACTLY the total bedspaces
+      // (every resident accounted for, not just "some").
       for (const b of svcBlocks.filter((x) => x.enabled && x.lines.length > 0)) {
         if (!b.lines.some((l) => num(l.quantity) > 0)) {
           e.services = t("err.serviceCount", { s: b.serviceName });
@@ -654,8 +664,8 @@ export function InquiryWizard() {
           break;
         }
         const svcTotal = b.lines.reduce((n, l) => n + num(l.quantity), 0);
-        if (svcTotal > totalBedspaces) {
-          e.services = t("err.serviceExceeds", { s: b.serviceName });
+        if (svcTotal !== totalBedspaces) {
+          e.services = t("err.serviceMismatch", { s: b.serviceName, n: totalBedspaces });
           break;
         }
       }
@@ -677,6 +687,22 @@ export function InquiryWizard() {
     setErrors(e);
     if (Object.keys(e).some((k) => e[k])) return;
 
+    // Leaving the Requirement step — applicant left a service's rate card
+    // unpicked? Fill in the default price card and ask them to confirm before
+    // actually advancing, same as at final submit (see submit() below).
+    if (step === 1) {
+      const { blocks, appliedAny } = withDefaultRateCards(svcBlocks);
+      if (appliedAny) {
+        setSvcBlocks(blocks);
+        setPendingDefaultAction("advance");
+        setShowDefaultConfirm(true);
+        return;
+      }
+    }
+    await advanceStep();
+  }
+
+  async function advanceStep() {
     // Step 1 → create the Draft inquiry (once), then upload any freshly-picked
     // documents NOW and attach their file ids to the draft — so the file lands
     // in Facilio at Step 1 rather than being deferred to the final submit.
@@ -734,15 +760,21 @@ export function InquiryWizard() {
     const { blocks, appliedAny } = withDefaultRateCards(svcBlocks);
     if (appliedAny) {
       setSvcBlocks(blocks);
+      setPendingDefaultAction("submit");
       setShowDefaultConfirm(true);
       return;
     }
     void doSubmit(svcBlocks);
   }
 
-  function confirmDefaultAndSubmit() {
+  /** Confirms the default rate card fill from EITHER trigger point — the
+   *  Requirement step's Continue, or final submit (see pendingDefaultAction). */
+  function confirmDefaultAndProceed() {
     setShowDefaultConfirm(false);
-    void doSubmit(svcBlocks);
+    const action = pendingDefaultAction;
+    setPendingDefaultAction(null);
+    if (action === "advance") void advanceStep();
+    else if (action === "submit") void doSubmit(svcBlocks);
   }
 
   async function doSubmit(blocksForSubmit: SvcBlock[]) {
@@ -1012,8 +1044,11 @@ export function InquiryWizard() {
 
       {showDefaultConfirm && (
         <DefaultRateCardDialog
-          onCancel={() => setShowDefaultConfirm(false)}
-          onConfirm={confirmDefaultAndSubmit}
+          onCancel={() => {
+            setShowDefaultConfirm(false);
+            setPendingDefaultAction(null);
+          }}
+          onConfirm={confirmDefaultAndProceed}
         />
       )}
     </div>
@@ -1331,10 +1366,13 @@ function StepRequirement({
   // Access Card is always on — the checkbox is locked, toggling is a no-op.
   const toggleSvc = (i: number) => {
     clearError("services");
-    setSvcBlocks((bs) =>
-      applyServiceRules(
+    setSvcBlocks((bs) => {
+      const cateringOnNow = bs.some((b) => b.enabled && isCateringService(b.serviceName));
+      return applyServiceRules(
         bs.map((b, idx) => {
-          if (idx !== i || isAccessCardService(b.serviceName)) return b;
+          if (idx !== i) return b;
+          if (isAccessCardService(b.serviceName)) return b; // always on — locked
+          if (isMessHallService(b.serviceName) && !cateringOnNow) return b; // mandatory without Catering — locked
           const enabled = !b.enabled;
           // Turning a rate-card service on for the first time starts it with
           // one blank line to pick, rather than opening with nothing to fill.
@@ -1344,7 +1382,8 @@ function StepRequirement({
               : b.lines;
           return { ...b, enabled, lines };
         })
-      )
+      );
+    }
     );
   };
   const patchSvcLine = (si: number, li: number, patch: Partial<SvcLine>) => {
@@ -1519,6 +1558,7 @@ function StepRequirement({
                       const pax = b.lines.reduce((n, l) => n + num(l.quantity), 0);
                       const locked = isAccessCardService(b.serviceName);
                       const parcelBlocked = isFoodParcelService(b.serviceName) && !cateringOn;
+                      const messHallMandatory = isMessHallService(b.serviceName) && !cateringOn;
                       return (
                         <div key={b.serviceId}>
                           <label
@@ -1532,7 +1572,7 @@ function StepRequirement({
                               type="checkbox"
                               checked={b.enabled}
                               onChange={() => toggleSvc(si)}
-                              disabled={locked || parcelBlocked}
+                              disabled={locked || parcelBlocked || messHallMandatory}
                               className="h-4 w-4 rounded border-line text-primary focus:ring-primary disabled:cursor-not-allowed"
                             />
                             <span className="text-sm font-semibold text-ink">{b.serviceName}</span>
@@ -1544,7 +1584,7 @@ function StepRequirement({
                                 {t("f.services.staff", { n: pax })}
                               </span>
                             )}
-                            {b.enabled && b.lines.length === 0 && !locked && (
+                            {b.enabled && b.lines.length === 0 && !locked && !messHallMandatory && (
                               <span className="ms-auto text-xs font-medium text-primary">
                                 {t("f.services.included")}
                               </span>
@@ -1554,10 +1594,20 @@ function StepRequirement({
                                 <Lock className="h-3.5 w-3.5" /> {t("f.services.alwaysIncluded")}
                               </span>
                             )}
+                            {messHallMandatory && (
+                              <span className="ms-auto flex items-center gap-1 text-xs font-medium text-primary">
+                                <Lock className="h-3.5 w-3.5" /> {t("f.services.mandatory")}
+                              </span>
+                            )}
                           </label>
                           {parcelBlocked && (
                             <p className="border-t border-line bg-canvas px-4 py-2 text-xs text-muted">
                               {t("f.services.foodParcelNeedsCatering")}
+                            </p>
+                          )}
+                          {messHallMandatory && (
+                            <p className="border-t border-line bg-canvas px-4 py-2 text-xs text-muted">
+                              {t("f.services.messHallMandatoryNote")}
                             </p>
                           )}
                           {b.enabled && b.rateCards.length > 0 && (
