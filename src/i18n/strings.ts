@@ -377,6 +377,7 @@ const en = {
   "err.serviceCount": "Enter a count for at least one {s} option, or turn it off.",
   "err.serviceCustom": "Describe the customized {s} option.",
   "err.serviceMismatch": "{s}'s count must add up to exactly the total bedspaces ({n}).",
+  "err.mealGroupMismatch": "Catering and Mess Hall together must add up to exactly the total bedspaces ({n}).",
   "err.genderSum": "Male + Female must add up to the number of beds ({n}).",
   "err.generic": "Something went wrong. Please try again.",
 
@@ -733,6 +734,7 @@ const ar: Record<StringKey, string> = {
   "err.serviceCount": "أدخل عدداً لخيار {s} واحد على الأقل، أو أوقف الخدمة.",
   "err.serviceCustom": "صف خيار {s} المخصّص.",
   "err.serviceMismatch": "يجب أن يساوي عدد {s} إجمالي الأسرّة ({n}) بالضبط.",
+  "err.mealGroupMismatch": "يجب أن يساوي مجموع عدد التموين والمطبخ المشترك معاً إجمالي الأسرّة ({n}) بالضبط.",
   "err.genderSum": "يجب أن يساوي مجموع الذكور والإناث عدد الأسرّة ({n}).",
   "err.generic": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
 

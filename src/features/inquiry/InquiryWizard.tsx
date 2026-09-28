@@ -94,6 +94,12 @@ function isMessHallService(name: string): boolean {
 function isAccessCardService(name: string): boolean {
   return namesMatch(name, "access card");
 }
+/** Catering and Mess Hall are alternative ways to cover meals — see
+ *  mealGroupTotal()/validateServices(): their combined count must equal the
+ *  total bedspaces, rather than each needing to match it on its own. */
+function isMealCoverageService(name: string): boolean {
+  return isCateringService(name) || isMessHallService(name);
+}
 
 // ── Draft persistence ─────────────────────────────────────────────────────────
 // v3: structured requirement (accommodation matrix + service_lines) replaces the
@@ -305,22 +311,25 @@ function buildServices(available: InquiryService[], stored?: ServiceRequirement[
       description: l.description,
       quantity: l.quantity != null ? String(l.quantity) : "",
     }));
-    const enabled = st?.enabled ?? false;
-    const lines =
-      storedLines.length > 0 || svc.rateCards.length === 0 || !enabled
-        ? storedLines
-        : [{ kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }];
     return {
       serviceId: svc.serviceId,
       serviceName: svc.serviceName,
       group: svc.group,
       isMealArrangement: Boolean(svc.isMealArrangement),
-      enabled,
+      enabled: st?.enabled ?? false,
       rateCards: svc.rateCards,
-      lines,
+      lines: storedLines,
     };
   });
-  return applyServiceRules(blocks);
+  // Apply the lock rules (Access Card always on, Mess Hall mandatory without
+  // Catering, …) BEFORE seeding a blank line — seeding on the pre-rule
+  // `enabled` would leave a locked-on service with zero lines, invisible to
+  // both validation and the default-rate-card fill below.
+  return applyServiceRules(blocks).map((b) =>
+    b.enabled && b.rateCards.length > 0 && b.lines.length === 0
+      ? { ...b, lines: [{ kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }] }
+      : b
+  );
 }
 
 /**
@@ -347,15 +356,31 @@ function defaultCardOf(b: SvcBlock): InquiryServiceRateCard | undefined {
   return b.rateCards.find((rc) => rc.isDefault);
 }
 
+/** Total pax already accounted for across the enabled Catering/Mess Hall lines. */
+function mealCoverageTotal(blocks: SvcBlock[]): number {
+  return blocks
+    .filter((b) => b.enabled && isMealCoverageService(b.serviceName))
+    .reduce((n, b) => n + b.lines.reduce((m, l) => m + num(l.quantity), 0), 0);
+}
+
 /**
  * Applicant left a rate card unpicked on an enabled, quantified line? Fill in
  * the service's default price card so the inquiry can proceed — the caller
  * then confirms this with the applicant before actually advancing/submitting
  * (see the wizard's next()/submit()/confirmDefaultAndProceed()).
+ *
+ * A service left completely untouched (no rate card AND no count — e.g. a
+ * mandatory service like Access Card, or Mess Hall standing in for Catering)
+ * doesn't surface as a validation error at all (nothing to disagree with), so
+ * it never reached the pass above. It gets the same default-card treatment
+ * here, quantified to what it's actually meant to cover: the full bedspace
+ * count for a standalone service, or — for Catering/Mess Hall, which are
+ * alternative ways to cover the same residents — whatever the OTHER one
+ * hasn't already covered.
  */
-function withDefaultRateCards(blocks: SvcBlock[]): { blocks: SvcBlock[]; appliedAny: boolean } {
+function withDefaultRateCards(blocks: SvcBlock[], totalBedspaces: number): { blocks: SvcBlock[]; appliedAny: boolean } {
   let appliedAny = false;
-  const out = blocks.map((b) => {
+  let out = blocks.map((b) => {
     if (!b.enabled || b.rateCards.length === 0) return b;
     const def = defaultCardOf(b);
     if (!def) return b;
@@ -368,6 +393,25 @@ function withDefaultRateCards(blocks: SvcBlock[]): { blocks: SvcBlock[]; applied
     });
     return { ...b, lines };
   });
+
+  let mealRemainder = totalBedspaces - mealCoverageTotal(out);
+  out = out.map((b) => {
+    if (!b.enabled || b.rateCards.length === 0) return b;
+    const untouched = b.lines.every((l) => l.kind === "RATE_CARD" && !l.rateCardEntryId && num(l.quantity) === 0);
+    if (!untouched) return b;
+    const def = defaultCardOf(b);
+    if (!def) return b;
+    const isMealMember = isMealCoverageService(b.serviceName);
+    const qty = isMealMember ? mealRemainder : totalBedspaces;
+    if (qty <= 0) return b;
+    appliedAny = true;
+    if (isMealMember) mealRemainder -= qty;
+    return {
+      ...b,
+      lines: [{ kind: "RATE_CARD" as const, rateCardEntryId: def.id, rateCardName: def.name, description: "", quantity: String(qty) }],
+    };
+  });
+
   return { blocks: out, appliedAny };
 }
 
@@ -641,7 +685,41 @@ export function InquiryWizard() {
   }
 
   // ── Validation per step ─────────────────────────────────────────────────────
-  function validate(s: number): Record<string, string> {
+  // Services — each enabled quantity service needs ≥1 count, custom needs a
+  // description, and its lines must add up to EXACTLY the total bedspaces
+  // (every resident accounted for, not just "some"). Catering and Mess Hall
+  // are the exception: they're alternative ways to cover the same residents,
+  // so their COMBINED count is what has to match, not each on its own.
+  function validateServices(blocks: SvcBlock[]): string | undefined {
+    const enabled = blocks.filter((b) => b.enabled && b.lines.length > 0);
+    const mealBlocks = enabled.filter((b) => isMealCoverageService(b.serviceName));
+    const otherBlocks = enabled.filter((b) => !isMealCoverageService(b.serviceName));
+
+    for (const b of enabled) {
+      const customLine = b.lines.find((l) => l.kind === "CUSTOM" && num(l.quantity) > 0);
+      if (customLine && !customLine.description.trim()) {
+        return t("err.serviceCustom", { s: b.serviceName });
+      }
+    }
+    for (const b of otherBlocks) {
+      if (!b.lines.some((l) => num(l.quantity) > 0)) {
+        return t("err.serviceCount", { s: b.serviceName });
+      }
+      const svcTotal = b.lines.reduce((n, l) => n + num(l.quantity), 0);
+      if (svcTotal !== totalBedspaces) {
+        return t("err.serviceMismatch", { s: b.serviceName, n: totalBedspaces });
+      }
+    }
+    if (mealBlocks.length > 0) {
+      const mealTotal = mealBlocks.reduce((n, b) => n + b.lines.reduce((m, l) => m + num(l.quantity), 0), 0);
+      if (mealTotal !== totalBedspaces) {
+        return t("err.mealGroupMismatch", { n: totalBedspaces });
+      }
+    }
+    return undefined;
+  }
+
+  function validate(s: number, opts?: { skipServices?: boolean }): Record<string, string> {
     const e: Record<string, string> = {};
     if (s === 0) {
       if (!contact.fullName.trim()) e.fullName = t("err.required");
@@ -659,24 +737,9 @@ export function InquiryWizard() {
       if (!mobilizationDate) e.mobilization = t("err.required");
       if (!moveOutDate) e.moveOut = t("err.required");
       else if (durationDaysVal < 1) e.moveOut = t("err.moveOutAfter");
-      // Services — each enabled quantity service needs ≥1 count, custom needs a
-      // description, and its lines must add up to EXACTLY the total bedspaces
-      // (every resident accounted for, not just "some").
-      for (const b of svcBlocks.filter((x) => x.enabled && x.lines.length > 0)) {
-        if (!b.lines.some((l) => num(l.quantity) > 0)) {
-          e.services = t("err.serviceCount", { s: b.serviceName });
-          break;
-        }
-        const customLine = b.lines.find((l) => l.kind === "CUSTOM" && num(l.quantity) > 0);
-        if (customLine && !customLine.description.trim()) {
-          e.services = t("err.serviceCustom", { s: b.serviceName });
-          break;
-        }
-        const svcTotal = b.lines.reduce((n, l) => n + num(l.quantity), 0);
-        if (svcTotal !== totalBedspaces) {
-          e.services = t("err.serviceMismatch", { s: b.serviceName, n: totalBedspaces });
-          break;
-        }
+      if (!opts?.skipServices) {
+        const svcErr = validateServices(svcBlocks);
+        if (svcErr) e.services = svcErr;
       }
     }
     if (s === 2 && template) {
@@ -692,15 +755,26 @@ export function InquiryWizard() {
 
   // ── Step transitions ─────────────────────────────────────────────────────────
   async function next() {
-    const e = validate(step);
+    // Services are checked separately below (after a default-fill attempt),
+    // so a blank mandatory service doesn't hard-block before it's even had a
+    // chance to be auto-filled.
+    const e = validate(step, { skipServices: step === 1 });
     setErrors(e);
     if (Object.keys(e).some((k) => e[k])) return;
 
     // Leaving the Requirement step — applicant left a service's rate card
-    // unpicked? Fill in the default price card and ask them to confirm before
-    // actually advancing, same as at final submit (see submit() below).
+    // unpicked, or a mandatory one untouched entirely? Fill in the default
+    // price card and ask them to confirm before actually advancing, same as
+    // at final submit (see submit() below). If even the filled state still
+    // doesn't add up (a genuine mismatch, not just a missing card), block
+    // with that error instead — that one needs the applicant's own fix.
     if (step === 1) {
-      const { blocks, appliedAny } = withDefaultRateCards(svcBlocks);
+      const { blocks, appliedAny } = withDefaultRateCards(svcBlocks, totalBedspaces);
+      const svcErr = validateServices(blocks);
+      if (svcErr) {
+        setErrors((prev) => ({ ...prev, services: svcErr }));
+        return;
+      }
       if (appliedAny) {
         setSvcBlocks(blocks);
         setPendingDefaultAction("advance");
@@ -762,11 +836,18 @@ export function InquiryWizard() {
     window.scrollTo({ top: 0 });
   }
 
-  // Applicant left a service's rate card unpicked? Fill in the default price
-  // card, ask them to confirm, THEN actually submit — rather than silently
-  // substituting it or blocking submission outright.
+  // Applicant left a service's rate card unpicked, or a mandatory one
+  // untouched entirely? Fill in the default price card, ask them to confirm,
+  // THEN actually submit — rather than silently substituting it or blocking
+  // submission outright. A genuine mismatch that the fill can't resolve
+  // still blocks, surfaced the same way a failed submit would be.
   function submit() {
-    const { blocks, appliedAny } = withDefaultRateCards(svcBlocks);
+    const { blocks, appliedAny } = withDefaultRateCards(svcBlocks, totalBedspaces);
+    const svcErr = validateServices(blocks);
+    if (svcErr) {
+      setApiError(svcErr);
+      return;
+    }
     if (appliedAny) {
       setSvcBlocks(blocks);
       setPendingDefaultAction("submit");

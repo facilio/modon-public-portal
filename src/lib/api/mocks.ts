@@ -286,13 +286,19 @@ export const mockApi = {
           { id: "rc-cat-non", name: "Catering Junior-10" },
         ],
       },
-      { serviceId: "svc-messhall", serviceName: "Mess Hall", group: 2, isMealArrangement: true, rateCards: [] },
+      {
+        serviceId: "svc-messhall", serviceName: "Mess Hall", group: 2, isMealArrangement: true,
+        rateCards: [{ id: "rc-mess-default", name: "Default Mess Hall Fee", isDefault: true }],
+      },
       { serviceId: "svc-selfcook", serviceName: "Self Cooking", group: 2, isMealArrangement: true, rateCards: [] },
       // Food Parcel depends on Catering being on (see isFoodParcelService/
       // canSelectFoodParcel) — additional group, no rate cards.
       { serviceId: "svc-foodparcel", serviceName: "Food Parcel", group: 3, rateCards: [] },
       // Access Card is always on, every resident (see isAccessCardService).
-      { serviceId: "svc-accesscard", serviceName: "Access Card", group: 3, rateCards: [] },
+      {
+        serviceId: "svc-accesscard", serviceName: "Access Card", group: 3,
+        rateCards: [{ id: "rc-access-default", name: "Access Card Fee", isDefault: true }],
+      },
       { serviceId: "svc-wifi", serviceName: "Wifi", group: 3, rateCards: [] },
       { serviceId: "svc-gym", serviceName: "Gym", group: 3, rateCards: [] },
     ]);
