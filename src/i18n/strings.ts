@@ -244,6 +244,7 @@ const en = {
 
   // Requirement — services (grouped, rate card dropdown + pax count)
   "f.services.hint2": "Turn on a service and choose a rate card and pax count for each line.",
+  "f.services.loading": "Loading services…",
   "f.services.empty": "No services available.",
   "f.services.primary": "Services",
   "f.services.meal": "Meal Arrangement",
@@ -609,6 +610,7 @@ const ar: Record<StringKey, string> = {
   "f.custom.explain": "يرجى التوضيح…",
 
   "f.services.hint2": "فعّل الخدمة واختر بطاقة السعر وعدد الأشخاص لكل سطر.",
+  "f.services.loading": "جارٍ تحميل الخدمات…",
   "f.services.empty": "لا توجد خدمات متاحة.",
   "f.services.primary": "الخدمات",
   "f.services.meal": "ترتيب الوجبات",

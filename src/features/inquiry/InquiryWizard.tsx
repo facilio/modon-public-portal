@@ -437,6 +437,7 @@ export function InquiryWizard() {
   // Masters + dynamic requirement.
   const [roomTypeOptions, setRoomTypeOptions] = useState<RoomTypeOption[]>([]);
   const [roomTypesLoading, setRoomTypesLoading] = useState(false);
+  const [svcLoading, setSvcLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState<InquiryService[]>([]);
   const [clientTypes, setClientTypes] = useState<ClientTypeOption[]>([]);
   const [accRows, setAccRows] = useState<AccRow[]>([]);
@@ -499,10 +500,18 @@ export function InquiryWizard() {
         if (!cancelled) setApiError(describeError(err, t("err.generic")));
       })
       .finally(() => !cancelled && setRoomTypesLoading(false));
+    setSvcLoading(true);
     api
       .getInquiryServices()
       .then((svcs) => !cancelled && setServiceOptions(svcs))
-      .catch((err) => reportApiError("load inquiry services", err));
+      // Without this, a slow/cold gateway or a dropped request leaves the
+      // services list silently empty forever — indistinguishable from there
+      // genuinely being no services, with no way to tell or retry.
+      .catch((err) => {
+        reportApiError("load inquiry services", err);
+        if (!cancelled) setApiError(describeError(err, t("err.generic")));
+      })
+      .finally(() => !cancelled && setSvcLoading(false));
     return () => {
       cancelled = true;
     };
@@ -920,6 +929,7 @@ export function InquiryWizard() {
             <StepRequirement
               lang={lang}
               roomTypesLoading={roomTypesLoading}
+              svcLoading={svcLoading}
               accRows={accRows}
               setAccRows={setAccRows}
               totalBedspaces={totalBedspaces}
@@ -1328,6 +1338,7 @@ function DocField({
 function StepRequirement({
   lang,
   roomTypesLoading,
+  svcLoading,
   accRows,
   setAccRows,
   totalBedspaces,
@@ -1343,6 +1354,7 @@ function StepRequirement({
 }: {
   lang: "en" | "ar";
   roomTypesLoading: boolean;
+  svcLoading: boolean;
   accRows: AccRow[];
   setAccRows: (fn: (r: AccRow[]) => AccRow[]) => void;
   totalBedspaces: number;
@@ -1536,7 +1548,12 @@ function StepRequirement({
 
       {/* Services */}
       <Field label={t("f.services")} error={errors.services} hint={t("f.services.hint2")}>
-        {svcBlocks.length === 0 ? (
+        {svcLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t("f.services.loading")}
+          </div>
+        ) : svcBlocks.length === 0 ? (
           <p className="text-sm text-muted">{t("f.services.empty")}</p>
         ) : (
           <div className="space-y-5">
