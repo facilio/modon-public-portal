@@ -243,7 +243,7 @@ const en = {
   "f.custom.explain": "Please explain…",
 
   // Requirement — services (grouped, rate card dropdown + pax count)
-  "f.services.hint2": "Turn on a service and choose a rate card and pax count for each line.",
+  "f.services.hint2": "Tick the services you need. Our team will confirm the details with you.",
   "f.services.loading": "Loading services…",
   "f.services.empty": "No services available.",
   "f.services.primary": "Services",
@@ -610,7 +610,7 @@ const ar: Record<StringKey, string> = {
   "f.custom": "مخصّص",
   "f.custom.explain": "يرجى التوضيح…",
 
-  "f.services.hint2": "فعّل الخدمة واختر بطاقة السعر وعدد الأشخاص لكل سطر.",
+  "f.services.hint2": "حدّد الخدمات التي تحتاجها. سيقوم فريقنا بتأكيد التفاصيل معك.",
   "f.services.loading": "جارٍ تحميل الخدمات…",
   "f.services.empty": "لا توجد خدمات متاحة.",
   "f.services.primary": "الخدمات",

@@ -16,7 +16,6 @@ import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Field } from "../../components/ui/Field";
 import { Input, inputClass } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
 import { DatePicker } from "../../components/ui/DatePicker";
 import { Stepper } from "../../components/ui/Stepper";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -68,39 +67,6 @@ function isValidMobile(v: string): boolean {
 }
 const PERSONAS: Persona[] = ["Corporate", "Sponsor"];
 // custom_services_1 group enum — Primary (2) / Additional (3) headings only.
-// Meal-arrangement services (Catering / Mess Hall / Self Cooking) are still
-// group 2 (Primary) — `isMealArrangement` just gives them their own heading.
-const GROUP_PRIMARY = 2;
-const GROUP_ADDITIONAL = 3;
-/** Sentinel value picked in a rate-card dropdown for a freeform/CUSTOM line. */
-const CUSTOM_OPT = "__custom__";
-
-// ── Service name rules (Food Parcel ⇢ needs Catering; Mess Hall ⇢ mandatory
-// without Catering; Access Card ⇢ always on) — name-matching rather than an
-// id, since the catalog id isn't stable across environments. Mirrors the
-// console's shared serviceRules.ts. ──────────
-function namesMatch(name: string, target: string): boolean {
-  return name.trim().toLowerCase() === target;
-}
-function isCateringService(name: string): boolean {
-  return namesMatch(name, "catering");
-}
-function isFoodParcelService(name: string): boolean {
-  return namesMatch(name, "food parcel");
-}
-function isMessHallService(name: string): boolean {
-  return namesMatch(name, "mess hall");
-}
-function isAccessCardService(name: string): boolean {
-  return namesMatch(name, "access card");
-}
-/** Catering and Mess Hall are alternative ways to cover meals — see
- *  mealGroupTotal()/validateServices(): their combined count must equal the
- *  total bedspaces, rather than each needing to match it on its own. */
-function isMealCoverageService(name: string): boolean {
-  return isCateringService(name) || isMessHallService(name);
-}
-
 // ── Draft persistence ─────────────────────────────────────────────────────────
 // v3: structured requirement (accommodation matrix + service_lines) replaces the
 // v2 room-lines + service-enum shape, so bump the key to start any stale draft
@@ -299,10 +265,42 @@ function buildAccommodation(roomTypes: RoomTypeOption[], stored?: AccommodationE
  * (lines stays empty). Locked/dependent services (Access Card, Food Parcel)
  * are corrected by applyServiceRules, not here.
  */
+/**
+ * The ONLY services the public form offers — a plain checklist of what the
+ * applicant needs. Matched by serviceId (stable) with a name fallback, so a
+ * rename in Facilio can't silently empty the list.
+ *
+ * Everything else in the catalogue (Mess Hall, Food Parcel, Access Card, Wifi,
+ * Gym Subscription) is decided by staff inside Facilio after the inquiry
+ * arrives — the applicant no longer sees or sets them, and the old mandatory
+ * rules (Access Card always-on, Mess Hall without Catering, meal-coverage
+ * totals) no longer apply on this form.
+ */
+const PUBLIC_SERVICE_IDS = ["3184033", "3184034", "3283083"] as const; // Catering, Laundry, Self Cooking
+const PUBLIC_SERVICE_NAMES = ["catering", "laundry", "self cooking"];
+
+function isPublicService(svc: { serviceId: string; serviceName: string }): boolean {
+  if ((PUBLIC_SERVICE_IDS as readonly string[]).includes(String(svc.serviceId))) return true;
+  const n = svc.serviceName.trim().toLowerCase().replace(/[-_]+/g, " ");
+  return PUBLIC_SERVICE_NAMES.includes(n);
+}
+
+/** Catalogue order varies; show the checklist in a fixed, predictable order. */
+function publicServiceRank(svc: { serviceId: string; serviceName: string }): number {
+  const i = (PUBLIC_SERVICE_IDS as readonly string[]).indexOf(String(svc.serviceId));
+  if (i >= 0) return i;
+  const n = svc.serviceName.trim().toLowerCase().replace(/[-_]+/g, " ");
+  const j = PUBLIC_SERVICE_NAMES.indexOf(n);
+  return j >= 0 ? j : PUBLIC_SERVICE_IDS.length;
+}
+
 function buildServices(available: InquiryService[], stored?: ServiceRequirement[]): SvcBlock[] {
   const byId = new Map<string, ServiceRequirement>();
   (stored ?? []).forEach((s) => byId.set(s.serviceId, s));
-  const blocks = available.map((svc) => {
+  const blocks = available
+    .filter(isPublicService)
+    .sort((a, b) => publicServiceRank(a) - publicServiceRank(b))
+    .map((svc) => {
     const st = byId.get(svc.serviceId);
     const storedLines: SvcLine[] = (st?.lines ?? []).map((l) => ({
       kind: l.kind,
@@ -321,98 +319,9 @@ function buildServices(available: InquiryService[], stored?: ServiceRequirement[
       lines: storedLines,
     };
   });
-  // Apply the lock rules (Access Card always on, Mess Hall mandatory without
-  // Catering, …) BEFORE seeding a blank line — seeding on the pre-rule
-  // `enabled` would leave a locked-on service with zero lines, invisible to
-  // both validation and the default-rate-card fill below.
-  return applyServiceRules(blocks).map((b) =>
-    b.enabled && b.rateCards.length > 0 && b.lines.length === 0
-      ? { ...b, lines: [{ kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }] }
-      : b
-  );
-}
-
-/**
- * Access Card is always on for every resident (locked — see isAccessCardService);
- * Food Parcel needs Catering on first (see isFoodParcelService/
- * isCateringService) — corrects both on every load (draft restore, edit
- * prefill, or a fresh catalog fetch) so a record saved before these rules
- * existed still comes out right, not just going forward.
- */
-function applyServiceRules(blocks: SvcBlock[]): SvcBlock[] {
-  const cateringOn = blocks.some((b) => b.enabled && isCateringService(b.serviceName));
-  return blocks.map((b) => {
-    if (isAccessCardService(b.serviceName)) return { ...b, enabled: true };
-    if (isFoodParcelService(b.serviceName) && !cateringOn) return { ...b, enabled: false };
-    // Mess Hall is the fallback meal arrangement when Catering isn't chosen —
-    // mandatory (locked on) in that case, optional once Catering is on.
-    if (isMessHallService(b.serviceName) && !cateringOn) return { ...b, enabled: true };
-    return b;
-  });
-}
-
-/** The rate card flagged as this service's default price, if any. */
-function defaultCardOf(b: SvcBlock): InquiryServiceRateCard | undefined {
-  return b.rateCards.find((rc) => rc.isDefault);
-}
-
-/** Total pax already accounted for across the enabled Catering/Mess Hall lines. */
-function mealCoverageTotal(blocks: SvcBlock[]): number {
-  return blocks
-    .filter((b) => b.enabled && isMealCoverageService(b.serviceName))
-    .reduce((n, b) => n + b.lines.reduce((m, l) => m + num(l.quantity), 0), 0);
-}
-
-/**
- * Applicant left a rate card unpicked on an enabled, quantified line? Fill in
- * the service's default price card so the inquiry can proceed — the caller
- * then confirms this with the applicant before actually advancing/submitting
- * (see the wizard's next()/submit()/confirmDefaultAndProceed()).
- *
- * A service left completely untouched (no rate card AND no count — e.g. a
- * mandatory service like Access Card, or Mess Hall standing in for Catering)
- * doesn't surface as a validation error at all (nothing to disagree with), so
- * it never reached the pass above. It gets the same default-card treatment
- * here, quantified to what it's actually meant to cover: the full bedspace
- * count for a standalone service, or — for Catering/Mess Hall, which are
- * alternative ways to cover the same residents — whatever the OTHER one
- * hasn't already covered.
- */
-function withDefaultRateCards(blocks: SvcBlock[], totalBedspaces: number): { blocks: SvcBlock[]; appliedAny: boolean } {
-  let appliedAny = false;
-  let out = blocks.map((b) => {
-    if (!b.enabled || b.rateCards.length === 0) return b;
-    const def = defaultCardOf(b);
-    if (!def) return b;
-    const lines = b.lines.map((l) => {
-      if (l.kind === "RATE_CARD" && !l.rateCardEntryId && num(l.quantity) > 0) {
-        appliedAny = true;
-        return { ...l, rateCardEntryId: def.id, rateCardName: def.name };
-      }
-      return l;
-    });
-    return { ...b, lines };
-  });
-
-  let mealRemainder = totalBedspaces - mealCoverageTotal(out);
-  out = out.map((b) => {
-    if (!b.enabled || b.rateCards.length === 0) return b;
-    const untouched = b.lines.every((l) => l.kind === "RATE_CARD" && !l.rateCardEntryId && num(l.quantity) === 0);
-    if (!untouched) return b;
-    const def = defaultCardOf(b);
-    if (!def) return b;
-    const isMealMember = isMealCoverageService(b.serviceName);
-    const qty = isMealMember ? mealRemainder : totalBedspaces;
-    if (qty <= 0) return b;
-    appliedAny = true;
-    if (isMealMember) mealRemainder -= qty;
-    return {
-      ...b,
-      lines: [{ kind: "RATE_CARD" as const, rateCardEntryId: def.id, rateCardName: def.name, description: "", quantity: String(qty) }],
-    };
-  });
-
-  return { blocks: out, appliedAny };
+  // No lock rules and no seeded rate-card line: the public form captures only
+  // WHICH services are wanted. Quantities and rate cards are set by staff.
+  return blocks;
 }
 
 /** Matrix rows → storable entries (bedspaces > 0 only). */
@@ -690,32 +599,12 @@ export function InquiryWizard() {
   // (every resident accounted for, not just "some"). Catering and Mess Hall
   // are the exception: they're alternative ways to cover the same residents,
   // so their COMBINED count is what has to match, not each on its own.
-  function validateServices(blocks: SvcBlock[]): string | undefined {
-    const enabled = blocks.filter((b) => b.enabled && b.lines.length > 0);
-    const mealBlocks = enabled.filter((b) => isMealCoverageService(b.serviceName));
-    const otherBlocks = enabled.filter((b) => !isMealCoverageService(b.serviceName));
-
-    for (const b of enabled) {
-      const customLine = b.lines.find((l) => l.kind === "CUSTOM" && num(l.quantity) > 0);
-      if (customLine && !customLine.description.trim()) {
-        return t("err.serviceCustom", { s: b.serviceName });
-      }
-    }
-    for (const b of otherBlocks) {
-      if (!b.lines.some((l) => num(l.quantity) > 0)) {
-        return t("err.serviceCount", { s: b.serviceName });
-      }
-      const svcTotal = b.lines.reduce((n, l) => n + num(l.quantity), 0);
-      if (svcTotal !== totalBedspaces) {
-        return t("err.serviceMismatch", { s: b.serviceName, n: totalBedspaces });
-      }
-    }
-    if (mealBlocks.length > 0) {
-      const mealTotal = mealBlocks.reduce((n, b) => n + b.lines.reduce((m, l) => m + num(l.quantity), 0), 0);
-      if (mealTotal !== totalBedspaces) {
-        return t("err.mealGroupMismatch", { n: totalBedspaces });
-      }
-    }
+  /**
+   * The public checklist carries no quantities or rate cards, so the old
+   * per-service count / bedspace-match / meal-coverage rules no longer apply.
+   * Ticking nothing is allowed — a resident may need no services at all.
+   */
+  function validateServices(_blocks: SvcBlock[]): string | undefined {
     return undefined;
   }
 
@@ -762,26 +651,8 @@ export function InquiryWizard() {
     setErrors(e);
     if (Object.keys(e).some((k) => e[k])) return;
 
-    // Leaving the Requirement step — applicant left a service's rate card
-    // unpicked, or a mandatory one untouched entirely? Fill in the default
-    // price card and ask them to confirm before actually advancing, same as
-    // at final submit (see submit() below). If even the filled state still
-    // doesn't add up (a genuine mismatch, not just a missing card), block
-    // with that error instead — that one needs the applicant's own fix.
-    if (step === 1) {
-      const { blocks, appliedAny } = withDefaultRateCards(svcBlocks, totalBedspaces);
-      const svcErr = validateServices(blocks);
-      if (svcErr) {
-        setErrors((prev) => ({ ...prev, services: svcErr }));
-        return;
-      }
-      if (appliedAny) {
-        setSvcBlocks(blocks);
-        setPendingDefaultAction("advance");
-        setShowDefaultConfirm(true);
-        return;
-      }
-    }
+    // The Requirement step is a plain checklist now — no rate cards to default
+    // in, and nothing to confirm before advancing.
     await advanceStep();
   }
 
@@ -836,24 +707,9 @@ export function InquiryWizard() {
     window.scrollTo({ top: 0 });
   }
 
-  // Applicant left a service's rate card unpicked, or a mandatory one
-  // untouched entirely? Fill in the default price card, ask them to confirm,
-  // THEN actually submit — rather than silently substituting it or blocking
-  // submission outright. A genuine mismatch that the fill can't resolve
-  // still blocks, surfaced the same way a failed submit would be.
+  // The checklist has no rate cards to default in, so submit goes straight
+  // through — staff pick the price cards in Facilio afterwards.
   function submit() {
-    const { blocks, appliedAny } = withDefaultRateCards(svcBlocks, totalBedspaces);
-    const svcErr = validateServices(blocks);
-    if (svcErr) {
-      setApiError(svcErr);
-      return;
-    }
-    if (appliedAny) {
-      setSvcBlocks(blocks);
-      setPendingDefaultAction("submit");
-      setShowDefaultConfirm(true);
-      return;
-    }
     void doSubmit(svcBlocks);
   }
 
@@ -1456,78 +1312,13 @@ function StepRequirement({
     clearError("accommodation");
     setAccRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
-  // Access Card is always on — the checkbox is locked, toggling is a no-op.
+  // Plain checklist: every row is freely toggleable, no locked or mandatory
+  // rows, and no rate-card lines — the public form captures WHICH services are
+  // wanted and nothing else.
   const toggleSvc = (i: number) => {
     clearError("services");
-    setSvcBlocks((bs) => {
-      const cateringOnNow = bs.some((b) => b.enabled && isCateringService(b.serviceName));
-      return applyServiceRules(
-        bs.map((b, idx) => {
-          if (idx !== i) return b;
-          if (isAccessCardService(b.serviceName)) return b; // always on — locked
-          if (isMessHallService(b.serviceName) && !cateringOnNow) return b; // mandatory without Catering — locked
-          const enabled = !b.enabled;
-          // Turning a rate-card service on for the first time starts it with
-          // one blank line to pick, rather than opening with nothing to fill.
-          const lines =
-            enabled && b.rateCards.length > 0 && b.lines.length === 0
-              ? [{ kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }]
-              : b.lines;
-          return { ...b, enabled, lines };
-        })
-      );
-    }
-    );
+    setSvcBlocks((bs) => bs.map((b, idx) => (idx === i ? { ...b, enabled: !b.enabled } : b)));
   };
-  const patchSvcLine = (si: number, li: number, patch: Partial<SvcLine>) => {
-    clearError("services");
-    setSvcBlocks((bs) =>
-      bs.map((b, idx) =>
-        idx === si ? { ...b, lines: b.lines.map((l, j) => (j === li ? { ...l, ...patch } : l)) } : b
-      )
-    );
-  };
-  const addSvcLine = (si: number) => {
-    clearError("services");
-    setSvcBlocks((bs) =>
-      bs.map((b, idx) =>
-        idx === si
-          ? { ...b, lines: [...b.lines, { kind: "RATE_CARD" as const, rateCardEntryId: "", rateCardName: "", description: "", quantity: "" }] }
-          : b
-      )
-    );
-  };
-  const removeSvcLine = (si: number, li: number) => {
-    clearError("services");
-    setSvcBlocks((bs) => bs.map((b, idx) => (idx === si ? { ...b, lines: b.lines.filter((_, j) => j !== li) } : b)));
-  };
-  /** Dropdown pick → the matching catalog card, or the "Customized…" sentinel. */
-  const pickSvcCard = (si: number, li: number, value: string) => {
-    clearError("services");
-    setSvcBlocks((bs) =>
-      bs.map((b, idx) => {
-        if (idx !== si) return b;
-        if (value === CUSTOM_OPT) {
-          return {
-            ...b,
-            lines: b.lines.map((l, j) => (j === li ? { ...l, kind: "CUSTOM", rateCardEntryId: "", rateCardName: "" } : l)),
-          };
-        }
-        const card = b.rateCards.find((rc) => rc.id === value);
-        return {
-          ...b,
-          lines: b.lines.map((l, j) =>
-            j === li ? { ...l, kind: "RATE_CARD", rateCardEntryId: value, rateCardName: card?.name ?? "" } : l
-          ),
-        };
-      })
-    );
-  };
-
-  const cateringOn = svcBlocks.some((b) => b.enabled && isCateringService(b.serviceName));
-  const meal = svcBlocks.filter((b) => b.isMealArrangement);
-  const primary = svcBlocks.filter((b) => b.group === GROUP_PRIMARY && !b.isMealArrangement);
-  const additional = svcBlocks.filter((b) => b.group === GROUP_ADDITIONAL && !b.isMealArrangement);
 
   return (
     <div className="space-y-6">
@@ -1627,7 +1418,8 @@ function StepRequirement({
         )}
       </Field>
 
-      {/* Services */}
+      {/* Services — a plain checklist of what the applicant needs. Quantities,
+          rate cards and any mandatory extras are decided by staff in Facilio. */}
       <Field label={t("f.services")} error={errors.services} hint={t("f.services.hint2")}>
         {svcLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted">
@@ -1637,147 +1429,21 @@ function StepRequirement({
         ) : svcBlocks.length === 0 ? (
           <p className="text-sm text-muted">{t("f.services.empty")}</p>
         ) : (
-          <div className="space-y-5">
-            {(
-              [
-                { label: t("f.services.primary"), list: primary },
-                { label: t("f.services.meal"), list: meal },
-                { label: t("f.services.additional"), list: additional },
-              ] as const
-            ).map(({ label, list }) =>
-              list.length === 0 ? null : (
-                <div key={label}>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    {label}
-                  </p>
-                  <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-                    {list.map((b) => {
-                      const si = svcBlocks.indexOf(b);
-                      const pax = b.lines.reduce((n, l) => n + num(l.quantity), 0);
-                      const locked = isAccessCardService(b.serviceName);
-                      const parcelBlocked = isFoodParcelService(b.serviceName) && !cateringOn;
-                      const messHallMandatory = isMessHallService(b.serviceName) && !cateringOn;
-                      return (
-                        <div key={b.serviceId}>
-                          <label
-                            className={cn(
-                              "flex items-center gap-3 px-4 py-3",
-                              parcelBlocked ? "cursor-not-allowed opacity-60" : "cursor-pointer",
-                              b.enabled && "bg-primary-soft/40"
-                            )}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={b.enabled}
-                              onChange={() => toggleSvc(si)}
-                              disabled={locked || parcelBlocked || messHallMandatory}
-                              className="h-4 w-4 rounded border-line text-primary focus:ring-primary disabled:cursor-not-allowed"
-                            />
-                            <span className="text-sm font-semibold text-ink">{b.serviceName}</span>
-                            {locked && (
-                              <span className="text-xs font-medium text-muted">{t("f.services.allPax")}</span>
-                            )}
-                            {b.enabled && b.lines.length > 0 && (
-                              <span className="ms-auto text-xs font-medium text-muted">
-                                {t("f.services.staff", { n: pax })}
-                              </span>
-                            )}
-                            {b.enabled && b.lines.length === 0 && !locked && !messHallMandatory && (
-                              <span className="ms-auto text-xs font-medium text-primary">
-                                {t("f.services.included")}
-                              </span>
-                            )}
-                            {locked && (
-                              <span className="ms-auto flex items-center gap-1 text-xs font-medium text-primary">
-                                <Lock className="h-3.5 w-3.5" /> {t("f.services.alwaysIncluded")}
-                              </span>
-                            )}
-                            {messHallMandatory && (
-                              <span className="ms-auto flex items-center gap-1 text-xs font-medium text-primary">
-                                <Lock className="h-3.5 w-3.5" /> {t("f.services.mandatory")}
-                              </span>
-                            )}
-                          </label>
-                          {parcelBlocked && (
-                            <p className="border-t border-line bg-canvas px-4 py-2 text-xs text-muted">
-                              {t("f.services.foodParcelNeedsCatering")}
-                            </p>
-                          )}
-                          {messHallMandatory && (
-                            <p className="border-t border-line bg-canvas px-4 py-2 text-xs text-muted">
-                              {t("f.services.messHallMandatoryNote")}
-                            </p>
-                          )}
-                          {b.enabled && b.rateCards.length > 0 && (
-                            <div className="border-t border-line bg-canvas px-4 py-3">
-                              <div className="mb-2 flex items-center justify-between">
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                                  {t("f.services.option")} · {t("f.services.numStaff")}
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={() => addSvcLine(si)}
-                                  className="text-xs font-semibold text-primary hover:underline"
-                                >
-                                  {t("f.services.addLine")}
-                                </button>
-                              </div>
-                              <div className="space-y-2">
-                                {b.lines.map((l, li) => (
-                                  <div key={li} className="space-y-1.5">
-                                    <div className="grid grid-cols-[1fr_110px_auto] items-center gap-3">
-                                      <Select
-                                        value={l.kind === "CUSTOM" ? CUSTOM_OPT : l.rateCardEntryId}
-                                        onChange={(e) => pickSvcCard(si, li, e.target.value)}
-                                        className="h-9"
-                                      >
-                                        <option value="" disabled>
-                                          {t("f.services.rateCard.select")}
-                                        </option>
-                                        {b.rateCards.map((rc) => (
-                                          <option key={rc.id} value={rc.id}>
-                                            {rc.name}
-                                          </option>
-                                        ))}
-                                        <option value={CUSTOM_OPT}>{t("f.services.rateCard.custom")}</option>
-                                      </Select>
-                                      <Input
-                                        type="number"
-                                        min={0}
-                                        placeholder="0"
-                                        className="h-9 text-end"
-                                        value={l.quantity}
-                                        onChange={(e) => patchSvcLine(si, li, { quantity: e.target.value })}
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => removeSvcLine(si, li)}
-                                        aria-label={`${t("f.doc.remove")} ${b.serviceName}`}
-                                        className="rounded-md p-1.5 text-muted hover:text-red-600"
-                                      >
-                                        <X className="h-4 w-4" />
-                                      </button>
-                                    </div>
-                                    {l.kind === "CUSTOM" && (
-                                      <Input
-                                        className="h-9"
-                                        placeholder={t("f.services.custom.explain")}
-                                        value={l.description}
-                                        onChange={(e) => patchSvcLine(si, li, { description: e.target.value })}
-                                      />
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )
-            )}
+          <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+            {svcBlocks.map((b, si) => (
+              <label
+                key={b.serviceId}
+                className="flex cursor-pointer items-center gap-3 px-4 py-3.5 hover:bg-surface-2"
+              >
+                <input
+                  type="checkbox"
+                  checked={b.enabled}
+                  onChange={() => toggleSvc(si)}
+                  className="h-4 w-4 shrink-0 accent-brand"
+                />
+                <span className="text-sm font-medium">{b.serviceName}</span>
+              </label>
+            ))}
           </div>
         )}
       </Field>
