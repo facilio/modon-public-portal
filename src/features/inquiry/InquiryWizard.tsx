@@ -20,7 +20,7 @@ import { DatePicker } from "../../components/ui/DatePicker";
 import { Stepper } from "../../components/ui/Stepper";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { RadioCards } from "./controls";
-import { DynamicField, formatAnswer, type AnswerValue } from "./DynamicField";
+import { type AnswerValue } from "./DynamicField";
 import { SuccessScreen } from "./SuccessScreen";
 import { cn } from "../../lib/cn";
 import {
@@ -415,9 +415,11 @@ export function InquiryWizard() {
   const [pendingDefaultAction, setPendingDefaultAction] = useState<"advance" | "submit" | null>(null);
 
   const [template, setTemplate] = useState<Template | null>(null);
-  const [templateLoading, setTemplateLoading] = useState(false);
 
-  const stepLabels = [t("wiz.step1"), t("wiz.step2"), t("wiz.step3"), t("wiz.step4")];
+  // Three stages: Your details -> Requirement -> Review. The questionnaire step
+  // ("wiz.step3") is no longer shown to applicants; the template is still
+  // loaded because the submit payload carries template_id/version.
+  const stepLabels = [t("wiz.step1"), t("wiz.step2"), t("wiz.step4")];
 
   const totalBedspaces = accRows.reduce((s, r) => s + num(r.bedspaces), 0);
   const durationMonths = monthsBetween(mobilizationDate, moveOutDate);
@@ -496,18 +498,17 @@ export function InquiryWizard() {
   // Active template per client type.
   useEffect(() => {
     let cancelled = false;
-    setTemplateLoading(true);
     setTemplate(null);
     api
       .getActiveTemplate(clientTypeId)
       .then((tpl) => !cancelled && setTemplate(tpl))
-      // A null template makes Step 3 empty AND blocks submit() — surface it here
-      // rather than letting the wizard dead-end on the Review step.
+      // The questionnaire step is gone, but a null template still BLOCKS
+      // submit() (it carries template_id/version in the payload) — surface the
+      // failure here rather than dead-ending on the Review step.
       .catch((err) => {
         reportApiError(`load template for clientType=${clientTypeId}`, err);
         if (!cancelled) setApiError(describeError(err, t("err.generic")));
-      })
-      .finally(() => !cancelled && setTemplateLoading(false));
+      });
     return () => {
       cancelled = true;
     };
@@ -631,14 +632,6 @@ export function InquiryWizard() {
         if (svcErr) e.services = svcErr;
       }
     }
-    if (s === 2 && template) {
-      for (const q of template.questions) {
-        if (!q.required) continue;
-        const v = answers[q.id];
-        const empty = v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
-        if (empty) e[q.id] = t("err.required");
-      }
-    }
     return e;
   }
 
@@ -697,7 +690,7 @@ export function InquiryWizard() {
       setBusy(false);
     }
 
-    if (step < 3) setStep(step + 1);
+    if (step < 2) setStep(step + 1);
     window.scrollTo({ top: 0 });
   }
 
@@ -837,7 +830,7 @@ export function InquiryWizard() {
             </p>
           </div>
           <span className="shrink-0 rounded-lg bg-canvas px-3 py-1.5 text-xs font-medium text-muted">
-            {t("wiz.step", { n: step + 1, total: 4 })} · {t("wiz.timeleft", { n: timeLeft })}
+            {t("wiz.step", { n: step + 1, total: stepLabels.length })} · {t("wiz.timeleft", { n: timeLeft })}
           </span>
         </div>
 
@@ -882,16 +875,6 @@ export function InquiryWizard() {
             />
           )}
           {step === 2 && (
-            <StepQuestions
-              template={template}
-              loading={templateLoading}
-              answers={answers}
-              setAnswers={setAnswers}
-              errors={errors}
-              clearError={clearError}
-            />
-          )}
-          {step === 3 && (
             <StepReview
               whoLabel={clientTypeOptions.find((o) => o.value === clientTypeId)?.label ?? ""}
               contact={contact}
@@ -905,8 +888,6 @@ export function InquiryWizard() {
               mobilizationDate={mobilizationDate}
               moveOutDate={moveOutDate}
               durationLabel={durationLabel}
-              template={template}
-              answers={answers}
               lang={lang}
               goto={setStep}
             />
@@ -919,7 +900,7 @@ export function InquiryWizard() {
           </div>
         )}
 
-        {step === 3 && missingDocLabels.length > 0 && (
+        {step === 2 && missingDocLabels.length > 0 && (
           <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
@@ -931,7 +912,7 @@ export function InquiryWizard() {
           </div>
         )}
 
-        {step < 3 && errorSummary.length > 0 && (
+        {step < 2 && errorSummary.length > 0 && (
           <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
@@ -958,7 +939,7 @@ export function InquiryWizard() {
             </Link>
           )}
 
-          {step < 3 ? (
+          {step < 2 ? (
             <Button onClick={next} disabled={busy}>
               {busy ? (
                 <>
@@ -1451,58 +1432,6 @@ function StepRequirement({
   );
 }
 
-// ── Step 3: Additional questions (template-driven only) ───────────────────────
-function StepQuestions({
-  template,
-  loading,
-  answers,
-  setAnswers,
-  errors,
-  clearError,
-}: {
-  template: Template | null;
-  loading: boolean;
-  answers: Record<string, AnswerValue>;
-  setAnswers: (fn: (a: Record<string, AnswerValue>) => Record<string, AnswerValue>) => void;
-  errors: Record<string, string>;
-  clearError: (k: string) => void;
-}) {
-  const { t } = useLang();
-  const questions = template?.questions ?? [];
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        {t("wiz.loadingQuestions")}
-      </div>
-    );
-  }
-  if (questions.length === 0) {
-    return <p className="text-sm text-muted">{t("wiz.noQuestions")}</p>;
-  }
-
-  return (
-    <div className="space-y-6">
-      {questions
-        .slice()
-        .sort((a, b) => a.order - b.order)
-        .map((q) => (
-          <DynamicField
-            key={q.id}
-            question={q}
-            value={answers[q.id]}
-            error={errors[q.id]}
-            onChange={(v) => {
-              clearError(q.id);
-              setAnswers((a) => ({ ...a, [q.id]: v }));
-            }}
-          />
-        ))}
-    </div>
-  );
-}
-
 // ── Step 4: Review ─────────────────────────────────────────────────────────────
 function StepReview({
   whoLabel,
@@ -1517,8 +1446,6 @@ function StepReview({
   mobilizationDate,
   moveOutDate,
   durationLabel,
-  template,
-  answers,
   lang,
   goto,
 }: {
@@ -1534,8 +1461,6 @@ function StepReview({
   mobilizationDate: string;
   moveOutDate: string;
   durationLabel: string;
-  template: Template | null;
-  answers: Record<string, AnswerValue>;
   lang: "en" | "ar";
   goto: (s: number) => void;
 }) {
@@ -1598,20 +1523,6 @@ function StepReview({
         </ReviewSection>
       )}
 
-      {(template?.questions?.length ?? 0) > 0 && (
-        <ReviewSection title={t("wiz.step3")} onEdit={() => goto(2)}>
-          {template?.questions
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((q) => (
-              <Row
-                key={q.id}
-                label={lang === "ar" ? q.label_ar : q.label_en}
-                value={formatAnswer(q, answers[q.id], dash, t("f.yes"), t("f.no"))}
-              />
-            ))}
-        </ReviewSection>
-      )}
     </div>
   );
 }
