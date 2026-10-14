@@ -220,7 +220,7 @@ const en = {
   "f.doc.upload": "Click to upload — PDF or image",
   "f.doc.replace": "Replace",
   "f.doc.remove": "Remove",
-  "f.additionalQuestions": "Additional questions",
+  "f.additionalQuestions": "Additional Comments",
   "f.additionalQuestions.hint": "Any queries or requirements you'd like us to know — optional.",
   "f.additionalQuestions.ph": "e.g. Can the move-in be split across two weekends? Is parking included?",
 
@@ -589,7 +589,7 @@ const ar: Record<StringKey, string> = {
   "f.doc.upload": "اضغط للرفع — PDF أو صورة",
   "f.doc.replace": "استبدال",
   "f.doc.remove": "إزالة",
-  "f.additionalQuestions": "أسئلة إضافية",
+  "f.additionalQuestions": "ملاحظات إضافية",
   "f.additionalQuestions.hint": "أي استفسارات أو متطلبات تود إعلامنا بها — اختياري.",
   "f.additionalQuestions.ph": "مثال: هل يمكن تقسيم الانتقال على عطلتين؟ هل مواقف السيارات مشمولة؟",
 
