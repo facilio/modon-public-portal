@@ -118,12 +118,29 @@ const CORS_ORIGINS = (process.env.CORS_ORIGIN ?? "http://localhost:5173")
   .split(",")
   .map((o) => o.trim());
 
-// Persona enum order matches the module's enumMap {1:Corporate,2:Sponsor,3:Individual}.
-// Facilio's v3 API uses the 1-based OPTION INDEX for enum fields (not the label).
-const PERSONA_ORDER = ["Corporate", "Sponsor", "Individual"];
+// persona_custom_inquiries, keyed by the 1-based OPTION INDEX Facilio's v3 API
+// expects for enum fields.
+//
+// These names are the PORTAL'S WIRE VALUES, not the org's labels. The org has
+// relabelled this enum before (Corporate/Sponsor/Individual -> Residential/
+// Commercial) and the field is now shown as "Client Type", so only the INDEX is
+// the contract. Keep this map in step with the org's enum ORDER — and note the
+// portal's own CLIENT_TYPE_PERSONA map must agree with it.
+//
+// Index also lines up with the client module's clienttype_client enum, which is
+// what /client-types serves to the picker.
+const PERSONA_BY_INDEX = { 1: "Corporate", 2: "Sponsor", 3: "Individual" };
+const PERSONA_INDEX = { Corporate: 1, Sponsor: 2, Individual: 3 };
+
 function personaIndex(persona) {
-  const i = PERSONA_ORDER.indexOf(persona);
-  return i >= 0 ? i + 1 : 1;
+  const i = PERSONA_INDEX[persona];
+  if (!i) {
+    // Previously this silently fell back to 1, writing "Residential" for an
+    // unrecognised persona. Still default, but say so.
+    console.warn(`[inquiry] unknown persona ${JSON.stringify(persona)} — writing index 1`);
+    return 1;
+  }
+  return i;
 }
 
 // Template module field link names (custom_questionnairetemplate).
@@ -732,7 +749,7 @@ function toEpochMs(dateStr) {
 // ── Status lookup + detail ──────────────────────────────────────────────────────
 // Field names come from the shared IF map above (single source of truth).
 function personaLabel(idx) {
-  return PERSONA_ORDER[Number(idx) - 1] ?? "Corporate";
+  return PERSONA_BY_INDEX[Number(idx)] ?? "Corporate";
 }
 
 /** Facilio "equals" filter clause (operatorId 3). */
@@ -1010,7 +1027,8 @@ function mapInquiryForEdit(rec, status, editable) {
     // the coarse public status, which defaults unknown states to "received".
     editable: !!editable,
     status,
-    // clientTypeId is index-aligned with persona (1=Company/Corporate, 2=Agency/Sponsor).
+    // clientTypeId IS the persona enum index — the portal resolves its label
+    // from /client-types, so a relabel in Facilio needs no change here.
     clientTypeId: String(personaIdx),
     contact: {
       fullName: rec[IF.contactName] || rec[IF.name] || "",

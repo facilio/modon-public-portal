@@ -65,7 +65,21 @@ const MOBILE_RE = /^\+?\d{0,4}\d{10}$/;
 function isValidMobile(v: string): boolean {
   return MOBILE_RE.test(v.replace(/[\s-]/g, ""));
 }
-const PERSONAS: Persona[] = ["Corporate", "Sponsor"];
+/**
+ * Client-type enum INDEX -> the persona wire value the gateway expects.
+ *
+ * The labels shown in the picker come from /client-types (the client module's
+ * clienttype_client enum) and are the org's to change — they currently read
+ * "Residential" and "Commercial", and the inquiry field is labelled
+ * "Client Type". These names are NOT those labels; they are the portal↔gateway
+ * wire values, and only the INDEX is the real contract. Keep in step with the
+ * gateway's PERSONA_INDEX.
+ */
+const PERSONA_BY_CLIENT_TYPE: Record<number, Persona> = {
+  1: "Corporate",
+  2: "Sponsor",
+  3: "Individual",
+};
 // custom_services_1 group enum — Primary (2) / Additional (3) headings only.
 // ── Draft persistence ─────────────────────────────────────────────────────────
 // v3: structured requirement (accommodation matrix + service_lines) replaces the
@@ -220,9 +234,9 @@ function durationText(start: string, end: string, u: DurationUnits): string {
   return parts.join(", ");
 }
 
-/** Client-type enum index → persona (index-aligned: 1=Company→Corporate). */
+/** Client-type enum index -> persona. Unknown index falls back to index 1. */
 function personaForClientType(id: string): Persona {
-  return PERSONAS[Math.max(0, Number(id) - 1)] ?? "Corporate";
+  return PERSONA_BY_CLIENT_TYPE[Number(id)] ?? "Corporate";
 }
 
 /** Build the accommodation matrix: one row per room type (+ one CUSTOM row),
