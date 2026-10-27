@@ -234,6 +234,26 @@ function durationText(start: string, end: string, u: DurationUnits): string {
   return parts.join(", ");
 }
 
+/**
+ * A commercial applicant is leasing a SHOP, not bedspaces, so the Requirement
+ * step asks something else entirely. Keyed off the same client-type index the
+ * persona is: the picker on step 1 is the one answer that decides it.
+ */
+const CLIENT_TYPE_COMMERCIAL = 2;
+function isCommercialClientType(id: string): boolean {
+  return Number(id) === CLIENT_TYPE_COMMERCIAL;
+}
+
+/**
+ * The commercial answers ride in `answers` — the questionnaire map the wizard
+ * already carries and already submits — so the inquiry module needs no new
+ * fields for any of this. Prefixed so they cannot collide with a template
+ * question id.
+ */
+const SHOP_USE = "shop.use";
+const SHOP_ACTIVITY = "shop.activity";
+const SHOP_AREA = "shop.areaSqm";
+
 /** Client-type enum index -> persona. Unknown index falls back to index 1. */
 function personaForClientType(id: string): Persona {
   return PERSONA_BY_CLIENT_TYPE[Number(id)] ?? "Corporate";
@@ -395,6 +415,7 @@ export function InquiryWizard() {
   const [moveOutDate, setMoveOutDate] = useState(saved.moveOutDate ?? "");
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>(saved.answers ?? {});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const isCommercial = isCommercialClientType(clientTypeId);
 
   // Uploaded documents. Freshly-picked files are uploaded + attached to the
   // draft on Step-1 Continue (see next()); the id then lives in DocState.fileId.
@@ -582,8 +603,8 @@ export function InquiryWizard() {
       additionalQuestions,
       mobilizationDate,
       moveOutDate,
-      accommodation: accToEntries(accRows),
-      services: svcToRequirements(svcBlocks),
+      accommodation: isCommercial ? [] : accToEntries(accRows),
+      services: isCommercial ? [] : svcToRequirements(svcBlocks),
       answers,
       inquiryId,
       inquiryCode,
@@ -635,12 +656,23 @@ export function InquiryWizard() {
       if (!tradeDoc.file && tradeDoc.fileId == null) e.tradeDoc = t("err.tradeDoc");
     }
     if (s === 1) {
-      if (totalBedspaces <= 0) e.accommodation = t("err.bedspaces");
-      const customAcc = accRows.find((r) => r.kind === "CUSTOM" && num(r.bedspaces) > 0);
-      if (customAcc && !customAcc.description.trim()) e.accommodation = t("err.customAcc");
+      // Dates are asked of everyone; what sits beside them is what differs.
       if (!mobilizationDate) e.mobilization = t("err.required");
       if (!moveOutDate) e.moveOut = t("err.required");
       else if (durationDaysVal < 1) e.moveOut = t("err.moveOutAfter");
+
+      if (isCommercial) {
+        if (!String(answers[SHOP_USE] ?? "")) e[SHOP_USE] = t("err.shopUse");
+        if (answers[SHOP_USE] === "service" && !String(answers[SHOP_ACTIVITY] ?? "").trim()) {
+          e[SHOP_ACTIVITY] = t("err.shopActivity");
+        }
+        if (!(Number(answers[SHOP_AREA]) > 0)) e[SHOP_AREA] = t("err.shopArea");
+        return e;
+      }
+
+      if (totalBedspaces <= 0) e.accommodation = t("err.bedspaces");
+      const customAcc = accRows.find((r) => r.kind === "CUSTOM" && num(r.bedspaces) > 0);
+      if (customAcc && !customAcc.description.trim()) e.accommodation = t("err.customAcc");
       if (!opts?.skipServices) {
         const svcErr = validateServices(svcBlocks);
         if (svcErr) e.services = svcErr;
@@ -771,8 +803,12 @@ export function InquiryWizard() {
             move_out_date: moveOutDate,
             duration_months: durationMonths,
           },
-          accommodation: accToEntries(accRows),
-          services: svcToRequirements(blocksForSubmit),
+          // Empty on a commercial inquiry, and empty EXPLICITLY: the rows are
+          // never shown so they would be empty anyway, but relying on that
+          // means a stale draft from a client-type switch could submit
+          // bedspaces against a shop.
+          accommodation: isCommercial ? [] : accToEntries(accRows),
+          services: isCommercial ? [] : svcToRequirements(blocksForSubmit),
           trade_license_number: tradeLicenseNumber.trim(),
           additional_questions: additionalQuestions.trim(),
           vat_certificate_file_id: vatFileId,
@@ -872,6 +908,9 @@ export function InquiryWizard() {
           {step === 1 && (
             <StepRequirement
               lang={lang}
+              isCommercial={isCommercial}
+              answers={answers}
+              setAnswers={setAnswers}
               roomTypesLoading={roomTypesLoading}
               svcLoading={svcLoading}
               accRows={accRows}
@@ -890,6 +929,8 @@ export function InquiryWizard() {
           )}
           {step === 2 && (
             <StepReview
+              isCommercial={isCommercial}
+              answers={answers}
               whoLabel={clientTypeOptions.find((o) => o.value === clientTypeId)?.label ?? ""}
               contact={contact}
               tradeLicenseNumber={tradeLicenseNumber}
@@ -1269,6 +1310,9 @@ function DocField({
 // ── Step 2: Requirement (accommodation matrix + dates + services) ─────────────
 function StepRequirement({
   lang,
+  isCommercial,
+  answers,
+  setAnswers,
   roomTypesLoading,
   svcLoading,
   accRows,
@@ -1285,6 +1329,9 @@ function StepRequirement({
   clearError,
 }: {
   lang: "en" | "ar";
+  isCommercial: boolean;
+  answers: Record<string, AnswerValue>;
+  setAnswers: (fn: (a: Record<string, AnswerValue>) => Record<string, AnswerValue>) => void;
   roomTypesLoading: boolean;
   svcLoading: boolean;
   accRows: AccRow[];
@@ -1354,6 +1401,18 @@ function StepRequirement({
         </Field>
       </div>
 
+      {/* A commercial applicant is leasing a shop: the accommodation matrix and
+          the service checklist below are about bedspaces and have nothing to
+          ask here. Three questions take their place. */}
+      {isCommercial ? (
+        <CommercialRequirement
+          answers={answers}
+          setAnswers={setAnswers}
+          errors={errors}
+          clearError={clearError}
+        />
+      ) : (
+      <>
       {/* Accommodation matrix */}
       <Field
         label={t("f.rooms")}
@@ -1442,12 +1501,105 @@ function StepRequirement({
           </div>
         )}
       </Field>
+      </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Requirement step for a commercial applicant.
+ *
+ * Three questions, and deliberately no rent, rate or shop number: an applicant
+ * cannot say which unit they want or what it should cost, and both are settled
+ * on the proposal. Asking here invites an answer nobody is in a position to
+ * give, and a figure they would later feel quoted.
+ *
+ * Every answer lands in the questionnaire map the wizard already submits, so
+ * none of this needs a new field on custom_inquiries.
+ */
+function CommercialRequirement({
+  answers,
+  setAnswers,
+  errors,
+  clearError,
+}: {
+  answers: Record<string, AnswerValue>;
+  setAnswers: (fn: (a: Record<string, AnswerValue>) => Record<string, AnswerValue>) => void;
+  errors: Record<string, string>;
+  clearError: (k: string) => void;
+}) {
+  const { t } = useLang();
+  const set = (key: string, v: AnswerValue) => {
+    clearError(key);
+    setAnswers((a) => ({ ...a, [key]: v }));
+  };
+  const use = String(answers[SHOP_USE] ?? "");
+
+  return (
+    <div className="space-y-6">
+      <Field label={t("f.shopUse")} required error={errors[SHOP_USE]}>
+        <RadioCards
+          value={use}
+          onChange={(v) => {
+            set(SHOP_USE, v);
+            // The follow-up only applies to an approved service; leaving a
+            // stale answer behind would submit an activity for a shop that is
+            // no longer one.
+            if (v !== "service") set(SHOP_ACTIVITY, undefined);
+          }}
+          options={[
+            { value: "serving", label: t("f.shopUse.serving") },
+            { value: "retail", label: t("f.shopUse.retail") },
+            { value: "service", label: t("f.shopUse.service") },
+          ]}
+        />
+      </Field>
+
+      {use === "service" && (
+        <Field
+          label={t("f.shopActivity")}
+          required
+          error={errors[SHOP_ACTIVITY]}
+          hint={t("f.shopActivity.hint")}
+          htmlFor="shopActivity"
+        >
+          <Input
+            id="shopActivity"
+            value={String(answers[SHOP_ACTIVITY] ?? "")}
+            onChange={(e) => set(SHOP_ACTIVITY, e.target.value)}
+            placeholder={t("f.shopActivity.ph")}
+            invalid={!!errors[SHOP_ACTIVITY]}
+          />
+        </Field>
+      )}
+
+      <div className="grid gap-5 sm:grid-cols-3">
+        <Field
+          label={t("f.shopArea")}
+          required
+          error={errors[SHOP_AREA]}
+          hint={t("f.shopArea.hint")}
+          htmlFor="shopArea"
+        >
+          <Input
+            id="shopArea"
+            inputMode="numeric"
+            value={String(answers[SHOP_AREA] ?? "")}
+            onChange={(e) => set(SHOP_AREA, e.target.value.replace(/[^\d.]/g, ""))}
+            placeholder={t("f.shopArea.ph")}
+            invalid={!!errors[SHOP_AREA]}
+          />
+        </Field>
+      </div>
     </div>
   );
 }
 
 // ── Step 4: Review ─────────────────────────────────────────────────────────────
 function StepReview({
+  isCommercial,
+  answers,
   whoLabel,
   contact,
   tradeLicenseNumber,
@@ -1463,6 +1615,8 @@ function StepReview({
   lang,
   goto,
 }: {
+  isCommercial: boolean;
+  answers: Record<string, AnswerValue>;
   whoLabel: string;
   contact: Contact;
   tradeLicenseNumber: string;
@@ -1488,6 +1642,17 @@ function StepReview({
     .join(sep);
 
   const enabledSvcs = svcBlocks.filter((b) => b.enabled);
+
+  // The stored answer is a stable key ("serving"), never the label — the label
+  // is looked up so Review reads in whichever language the applicant chose.
+  const SHOP_USE_LABEL: Record<string, Parameters<typeof t>[0]> = {
+    serving: "f.shopUse.serving",
+    retail: "f.shopUse.retail",
+    service: "f.shopUse.service",
+  };
+  const useKey = String(answers[SHOP_USE] ?? "");
+  const shopUseLabel = SHOP_USE_LABEL[useKey] ? t(SHOP_USE_LABEL[useKey]) : "";
+  const shopAreaLabel = Number(answers[SHOP_AREA]) > 0 ? `${answers[SHOP_AREA]} ${t("f.shopArea.ph")}` : "";
 
   return (
     <div className="space-y-6">
@@ -1515,11 +1680,24 @@ function StepReview({
           label={t("f.duration.auto")}
           value={durationLabel !== "—" ? durationLabel : dash}
         />
-        <Row label={t("f.rooms")} value={accText || dash} />
-        <Row label={t("f.total")} value={totalBedspaces ? String(totalBedspaces) : dash} />
+        {isCommercial ? (
+          <>
+            <Row label={t("f.shopUse")} value={shopUseLabel || dash} />
+            {String(answers[SHOP_ACTIVITY] ?? "").trim() && (
+              <Row label={t("f.shopActivity")} value={String(answers[SHOP_ACTIVITY])} />
+            )}
+            <Row label={t("f.shopArea")} value={shopAreaLabel || dash} />
+          </>
+        ) : (
+          <>
+            <Row label={t("f.rooms")} value={accText || dash} />
+            <Row label={t("f.total")} value={totalBedspaces ? String(totalBedspaces) : dash} />
+          </>
+        )}
       </ReviewSection>
 
-      {enabledSvcs.length > 0 && (
+      {/* Services are a bedspace concern; a shop lease has none to list. */}
+      {!isCommercial && enabledSvcs.length > 0 && (
         <ReviewSection title={t("f.services")} onEdit={() => goto(1)}>
           {enabledSvcs.map((b) => {
             const detail =
