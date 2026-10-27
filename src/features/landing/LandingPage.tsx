@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
+import { cn } from "../../lib/cn";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Chip } from "../../components/ui/Chip";
@@ -27,9 +28,20 @@ function Shell({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto w-full max-w-5xl px-5 sm:px-6">{children}</div>;
 }
 
-function Eyebrow({ children }: { children: React.ReactNode }) {
+function Eyebrow({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+    <p
+      className={cn(
+        "text-xs font-semibold uppercase tracking-wide text-muted",
+        className
+      )}
+    >
       {children}
     </p>
   );
@@ -50,7 +62,11 @@ export function LandingPage() {
   );
 }
 
-// ── Hero (full-bleed banner with the "get ready" badges) ─────────────────────
+// ── Hero (full-bleed banner with the CTA + the "get ready" badges) ──────
+//
+// The banner carries the primary call to action. It used to live only in the
+// StartBar at the FOOT of the page, which meant a visitor had to scroll past
+// four sections before they could do the one thing the page exists for.
 function Hero() {
   const { t } = useLang();
   const [types, setTypes] = useState<ClientTypeOption[]>([]);
@@ -67,24 +83,54 @@ function Hero() {
   }, []);
 
   return (
-    <section className="border-b border-line bg-white">
+    <section className="relative overflow-hidden bg-gradient-to-br from-ink via-ink to-primary-hover">
+      {/* A soft wash off the top-right corner so the band reads as a banner
+          rather than a flat navy rectangle. Decorative only. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(55rem_28rem_at_82%_-15%,rgba(37,99,235,0.55),transparent_70%)]"
+      />
       <Shell>
-        <div className="py-12">
-          <Eyebrow>{t("hero.eyebrow")}</Eyebrow>
-          <h1 className="mt-3 max-w-3xl text-3xl font-extrabold leading-tight text-ink sm:text-4xl">
+        <div className="relative py-14 sm:py-16">
+          <Eyebrow className="text-white/60">{t("hero.eyebrow")}</Eyebrow>
+          <h1 className="mt-3 max-w-3xl text-3xl font-extrabold leading-tight text-white sm:text-[2.6rem]">
             {t("hero.title")}
           </h1>
-          <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-muted">
+          <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-white/75">
             {t("hero.subtitle")}
           </p>
 
+          {/* The CTA. White on navy: the strongest thing on the banner. */}
+          <div className="mt-8">
+            <Link to="/inquiry" className="inline-block">
+              <Button size="lg" variant="secondary" className="border-transparent shadow-lg">
+                {t("hero.cta.primary")}
+                <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+              </Button>
+            </Link>
+          </div>
+
           {/* "Get these ready" badges. */}
           <div className="mt-7 flex flex-wrap gap-2.5">
-            <Chip icon={<Clock className="h-4 w-4" />}>{t("before.pill.time")}</Chip>
-            <Chip icon={<ListChecks className="h-4 w-4" />}>
+            <Chip
+              className="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm"
+              iconClassName="text-white/70"
+              icon={<Clock className="h-4 w-4" />}
+            >
+              {t("before.pill.time")}
+            </Chip>
+            <Chip
+              className="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm"
+              iconClassName="text-white/70"
+              icon={<ListChecks className="h-4 w-4" />}
+            >
               {t("before.pill.steps")}
             </Chip>
-            <Chip icon={<Upload className="h-4 w-4" />}>
+            <Chip
+              className="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm"
+              iconClassName="text-white/70"
+              icon={<Upload className="h-4 w-4" />}
+            >
               {t("before.pill.nouploads")}
             </Chip>
           </div>
@@ -98,11 +144,11 @@ function Hero() {
                 return (
                   <span
                     key={ct.id}
-                    className="inline-flex items-center gap-2 rounded-full border border-line bg-canvas px-4 py-2 text-sm"
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm"
                   >
-                    <Icon className="h-4 w-4 text-primary" />
-                    <span className="font-semibold text-ink">{ct.name}</span>
-                    {descKey && <span className="text-muted">· {t(descKey)}</span>}
+                    <Icon className="h-4 w-4 text-white/70" />
+                    <span className="font-semibold text-white">{ct.name}</span>
+                    {descKey && <span className="text-white/60">· {t(descKey)}</span>}
                   </span>
                 );
               })}
