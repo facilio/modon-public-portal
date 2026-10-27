@@ -6,14 +6,10 @@ export function Chip({
   icon,
   children,
   className,
-  iconClassName,
 }: {
   icon?: ReactNode;
   children: ReactNode;
   className?: string;
-  /** Overrides the icon tint — the hero banner needs a light icon on navy,
-   *  where the default `text-primary` has too little contrast. */
-  iconClassName?: string;
 }) {
   return (
     <span
@@ -22,7 +18,7 @@ export function Chip({
         className
       )}
     >
-      {icon && <span className={cn("text-primary", iconClassName)}>{icon}</span>}
+      {icon && <span className="text-primary">{icon}</span>}
       {children}
     </span>
   );

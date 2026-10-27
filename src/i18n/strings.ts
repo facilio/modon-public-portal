@@ -21,8 +21,6 @@ const en = {
     "Tell us what you need and we’ll get back within one business day with an offer tailored to you, fully managed rooms with cleaning, catering, and more.",
   "hero.cta.primary": "Start an Inquiry",
   "hero.cta.secondary": "Track your Inquiry",
-  "who.company.desc": "bulk workforce housing",
-  "who.agency.desc": "sponsors & NGOs placing beneficiaries",
   "before.heading": "Before you start",
   "before.desc":
     "The inquiry form takes about 3 minutes. Keep handy your contact details, the number of beds and move-in date, and (for companies) your trade license number. No documents are needed at this stage.",
@@ -423,8 +421,6 @@ const ar: Record<StringKey, string> = {
   "hero.title": "إقامة مُدارة لفريقك أو للمستفيدين المكفولين أو لك شخصياً",
   "hero.subtitle":
     "أخبرنا باحتياجك وسنعاود التواصل خلال يوم عمل واحد بعرض مخصّص لك، غرف مُدارة بالكامل مع خدمات التنظيف والإعاشة والمزيد.",
-  "who.company.desc": "سكن جماعي للقوى العاملة",
-  "who.agency.desc": "الجهات الراعية والمنظمات غير الربحية",
   "before.heading": "قبل أن تبدأ",
   "before.desc":
     "يستغرق نموذج الطلب حوالي ٣ دقائق. جهّز بيانات التواصل، وعدد الأسرّة وتاريخ الدخول، و(للشركات) رقم الرخصة التجارية. لا حاجة لأي مستندات في هذه المرحلة.",

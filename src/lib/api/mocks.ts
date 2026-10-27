@@ -319,10 +319,14 @@ export const mockApi = {
     ]);
   },
 
+  // Mirrors the LIVE `client.clienttype_client` enum in the CWRC org, read
+  // back on 2026-10-27. It used to say Company / Agency, which made the
+  // commercial branch unreachable in dev and left the id mapping unverifiable
+  // offline — the mock has to be the real enum or it proves nothing.
   getClientTypes(): Promise<ClientTypeOption[]> {
     return wait([
-      { id: "1", name: "Company" },
-      { id: "2", name: "Agency" },
+      { id: "1", name: "Residential" },
+      { id: "2", name: "Commercial" },
     ]);
   },
 

@@ -2,25 +2,18 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
-  Clock,
-  ListChecks,
-  Building2,
-  HeartHandshake,
   ClipboardList,
   Search,
   FileText,
   KeyRound,
-  Upload,
   Loader2,
-  type LucideIcon,
 } from "lucide-react";
 import { useLang } from "../../i18n/LanguageContext";
 import { cn } from "../../lib/cn";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
-import { Chip } from "../../components/ui/Chip";
 import { serviceIcon } from "../../lib/icons";
-import { api, type ClientTypeOption, type ServiceOption } from "../../lib/api";
+import { api, type ServiceOption } from "../../lib/api";
 
 // Content column — a portal, not a brochure. A touch wider than the wizard so
 // the two-column "what you'll need" grid has room to breathe (per the design).
@@ -69,18 +62,6 @@ export function LandingPage() {
 // four sections before they could do the one thing the page exists for.
 function Hero() {
   const { t } = useLang();
-  const [types, setTypes] = useState<ClientTypeOption[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .getClientTypes()
-      .then((r) => !cancelled && setTypes(r))
-      .catch(() => !cancelled && setTypes([]));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   return (
     <section className="relative overflow-hidden bg-gradient-to-br from-ink via-ink to-primary-hover">
@@ -110,68 +91,10 @@ function Hero() {
             </Link>
           </div>
 
-          {/* "Get these ready" badges. */}
-          <div className="mt-7 flex flex-wrap gap-2.5">
-            <Chip
-              className="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm"
-              iconClassName="text-white/70"
-              icon={<Clock className="h-4 w-4" />}
-            >
-              {t("before.pill.time")}
-            </Chip>
-            <Chip
-              className="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm"
-              iconClassName="text-white/70"
-              icon={<ListChecks className="h-4 w-4" />}
-            >
-              {t("before.pill.steps")}
-            </Chip>
-            <Chip
-              className="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm"
-              iconClassName="text-white/70"
-              icon={<Upload className="h-4 w-4" />}
-            >
-              {t("before.pill.nouploads")}
-            </Chip>
-          </div>
-
-          {/* Who this is for — derived from the client-type enum (not hardcoded). */}
-          {types.length > 0 && (
-            <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap">
-              {types.map((ct) => {
-                const Icon = clientTypeIcon(ct.name);
-                const descKey = clientTypeDescKey(ct.name);
-                return (
-                  <span
-                    key={ct.id}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm"
-                  >
-                    <Icon className="h-4 w-4 text-white/70" />
-                    <span className="font-semibold text-white">{ct.name}</span>
-                    {descKey && <span className="text-white/60">· {t(descKey)}</span>}
-                  </span>
-                );
-              })}
-            </div>
-          )}
         </div>
       </Shell>
     </section>
   );
-}
-
-function clientTypeIcon(name: string): LucideIcon {
-  const n = name.toLowerCase();
-  if (/agenc|sponsor|ngo/.test(n)) return HeartHandshake;
-  return Building2;
-}
-function clientTypeDescKey(
-  name: string
-): "who.company.desc" | "who.agency.desc" | null {
-  const n = name.toLowerCase();
-  if (/compan|corporate/.test(n)) return "who.company.desc";
-  if (/agenc|sponsor|ngo/.test(n)) return "who.agency.desc";
-  return null;
 }
 
 // Soft icon-tile colours for the "how it works" cards (per the design).
