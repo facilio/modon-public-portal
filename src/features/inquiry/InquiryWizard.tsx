@@ -428,6 +428,7 @@ export function InquiryWizard() {
   const [svcLoading, setSvcLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState<InquiryService[]>([]);
   const [clientTypes, setClientTypes] = useState<ClientTypeOption[]>([]);
+  const [clientTypesLoading, setClientTypesLoading] = useState(true);
   const [accRows, setAccRows] = useState<AccRow[]>([]);
   const [svcBlocks, setSvcBlocks] = useState<SvcBlock[]>([]);
   // Stored requirement (draft restore OR edit prefill) overlaid onto the masters.
@@ -517,17 +518,26 @@ export function InquiryWizard() {
         setClientTypes(ct);
         setClientTypeId((prev) => (ct.some((c) => c.id === prev) ? prev : ct[0]?.id ?? prev));
       })
-      .catch(() => !cancelled && setClientTypes([]));
+      .catch(() => !cancelled && setClientTypes([]))
+      .finally(() => !cancelled && setClientTypesLoading(false));
     return () => {
       cancelled = true;
     };
   }, []);
 
+  // Only ever the REAL enum, or the last-resort pair below if the fetch fails.
+  // Rendering a guess while the fetch is in flight made the picker visibly
+  // change its own options a moment after the form appeared — the ids are the
+  // same, so nothing broke, but it reads as the page loading twice.
+  // StepContact renders a skeleton instead while `clientTypesLoading`.
   const clientTypeOptions: { value: string; label: string }[] = clientTypes.length
     ? clientTypes.map((ct) => ({ value: ct.id, label: ct.name }))
     : [
-        { value: "1", label: t("f.persona.company") },
-        { value: "2", label: t("f.persona.agency") },
+        // Matches the live `client.clienttype_client` enum: 1 Residential,
+        // 2 Commercial. Shown only when the lookup fails, so the form stays
+        // usable rather than dead-ending on an empty picker.
+        { value: "1", label: t("f.persona.residential") },
+        { value: "2", label: t("f.persona.commercial") },
       ];
 
   // Active template per client type.
@@ -867,6 +877,16 @@ export function InquiryWizard() {
 
   return (
     <div className="container-page max-w-4xl py-10">
+      {/* Leaving the form is a top-left action, next to where the eye starts,
+          not something to be found by scrolling to the bottom of the step. */}
+      <Link
+        to="/"
+        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted transition-colors hover:text-primary"
+      >
+        <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
+        {t("nav.home")}
+      </Link>
+
       <Card className="p-6">
         <Stepper steps={stepLabels} current={step} />
       </Card>
@@ -890,6 +910,7 @@ export function InquiryWizard() {
               clientTypeId={clientTypeId}
               setClientTypeId={setClientTypeId}
               clientTypeOptions={clientTypeOptions}
+              clientTypesLoading={clientTypesLoading}
               contact={contact}
               setContact={setContact}
               tradeLicenseNumber={tradeLicenseNumber}
@@ -986,12 +1007,9 @@ export function InquiryWizard() {
               {t("wiz.back")}
             </Button>
           ) : (
-            <Link to="/">
-              <Button variant="ghost">
-                <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
-                {t("nav.home")}
-              </Button>
-            </Link>
+            // Holds the left half of the justify-between row on step 1, where
+            // there is no Back, so Continue stays pinned to the right.
+            <span />
           )}
 
           {step < 2 ? (
@@ -1071,6 +1089,7 @@ function StepContact({
   clientTypeId,
   setClientTypeId,
   clientTypeOptions,
+  clientTypesLoading,
   contact,
   setContact,
   tradeLicenseNumber,
@@ -1088,6 +1107,7 @@ function StepContact({
   clientTypeId: string;
   setClientTypeId: (id: string) => void;
   clientTypeOptions: { value: string; label: string }[];
+  clientTypesLoading: boolean;
   contact: Contact;
   setContact: (fn: (c: Contact) => Contact) => void;
   tradeLicenseNumber: string;
@@ -1117,6 +1137,13 @@ function StepContact({
       <Field label={t("f.persona")}>
         {locked ? (
           <ReadOnlyValue>{personaLabel}</ReadOnlyValue>
+        ) : clientTypesLoading ? (
+          // Same grid and card height as RadioCards, so the real options drop
+          // straight in without the block changing size.
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true">
+            <div className="h-[46px] animate-pulse rounded-lg border border-line bg-canvas" />
+            <div className="h-[46px] animate-pulse rounded-lg border border-line bg-canvas" />
+          </div>
         ) : (
           <RadioCards value={clientTypeId} onChange={setClientTypeId} options={clientTypeOptions} />
         )}

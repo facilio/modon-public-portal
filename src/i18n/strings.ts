@@ -147,6 +147,8 @@ const en = {
 
   // Step 1 — contact
   "f.persona": "This inquiry is for",
+  "f.persona.residential": "Residential",
+  "f.persona.commercial": "Commercial",
   "f.persona.company": "A company",
   "f.persona.agency": "An agency / sponsor",
   "f.persona.individual": "Myself / my family",
@@ -551,6 +553,8 @@ const ar: Record<StringKey, string> = {
   "err.shopActivity": "يرجى تحديد الخدمة.",
   "err.shopArea": "يرجى إدخال المساحة التقريبية.",
   "f.persona": "هذا الطلب لأجل",
+  "f.persona.residential": "سكني",
+  "f.persona.commercial": "تجاري",
   "f.persona.company": "شركة",
   "f.persona.agency": "جهة / راعٍ",
   "f.persona.individual": "لي / لعائلتي",
